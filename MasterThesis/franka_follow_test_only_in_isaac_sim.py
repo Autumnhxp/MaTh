@@ -25,7 +25,7 @@ from omni.isaac.core.prims.rigid_prim import RigidPrim
 
 usd_file_path = "omniverse://localhost/Users/Autumn/basic_environment/Environment.usd"
 franka_prim_path = "/Xform/Franka"
-object_prim_path = "/World/Cylinde"
+object_prim_path = "/World/Cylinder"
 
 # open stage
 open_stage(usd_file_path)
