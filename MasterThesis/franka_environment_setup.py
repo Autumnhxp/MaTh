@@ -21,7 +21,8 @@ import torch
 import omni.isaac.core.utils.prims as prim_utils
 
 import omni.isaac.lab.sim as sim_utils
-from omni.isaac.lab.assets import Articulation
+from omni.isaac.lab.assets import Articulation,RigidObjectCfg
+from omni.isaac.lab.sim.schemas.schemas_cfg import RigidBodyPropertiesCfg
 from omni.isaac.lab.utils.assets import ISAAC_NUCLEUS_DIR
 
 ##
@@ -74,8 +75,38 @@ def design_scene() -> tuple[dict, list[list[float]]]:
     human_cfg = sim_utils.UsdFileCfg(usd_path = f"{ISAAC_NUCLEUS_DIR}/People/Characters/F_Medical_01/F_Medical_01.usd",scale=(1.0, 1.0, 1.0))
     human_cfg.func("/World/Origin1/human", human_cfg, translation=(0.2, 0.7, 0.0), orientation=(0.0, 0.0, 0.0, 0.0))
     # -- Table
-    cfg = sim_utils.UsdFileCfg(usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/Mounts/ThorlabsTable/table_instanceable.usd")
-    cfg.func("/World/Origin1/Table", cfg, translation=(0.0, 0.0, 0.8))
+    table_cfg = sim_utils.UsdFileCfg(usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/Mounts/ThorlabsTable/table_instanceable.usd")
+    table_cfg.func("/World/Origin1/Table", table_cfg, translation=(0.0, 0.0, 0.8))
+    # -- Object
+    object_cfg = sim_utils.UsdFileCfg(usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/Blocks/DexCube/dex_cube_instanceable.usd",
+                    scale=(0.8, 0.8, 0.8),
+                    rigid_props=RigidBodyPropertiesCfg(
+                        solver_position_iteration_count=16,
+                        solver_velocity_iteration_count=1,
+                        max_angular_velocity=1000.0,
+                        max_linear_velocity=1000.0,
+                        max_depenetration_velocity=5.0,
+                        disable_gravity=False,)
+    )
+    Object = RigidObjectCfg
+    # Set Cube as object
+#        self.scene.object = RigidObjectCfg(
+#            prim_path="{ENV_REGEX_NS}/Object",
+#            init_state=RigidObjectCfg.InitialStateCfg(pos=[0.5, 0, 0.055], rot=[1, 0, 0, 0]),
+#            spawn=UsdFileCfg(
+#                usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/Blocks/DexCube/dex_cube_instanceable.usd",
+#                scale=(0.8, 0.8, 0.8),
+#                rigid_props=RigidBodyPropertiesCfg(
+#                    solver_position_iteration_count=16,
+#                    solver_velocity_iteration_count=1,
+#                    max_angular_velocity=1000.0,
+#                    max_linear_velocity=1000.0,
+#                    max_depenetration_velocity=5.0,
+#                    disable_gravity=False,
+#                ),
+#            ),
+#        )
+
     # -- Robot
     franka_arm_cfg = FRANKA_PANDA_CFG.replace(prim_path="/World/Origin1/Robot")
     franka_arm_cfg.init_state.pos = (0.0, 0.0, 0.8)
