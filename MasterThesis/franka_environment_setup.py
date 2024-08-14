@@ -21,8 +21,8 @@ import torch
 import omni.isaac.core.utils.prims as prim_utils
 
 import omni.isaac.lab.sim as sim_utils
-from omni.isaac.lab.assets import Articulation,RigidObjectCfg
-from omni.isaac.lab.sim.schemas.schemas_cfg import RigidBodyPropertiesCfg
+from omni.isaac.lab.assets import Articulation,RigidObject,RigidObjectCfg
+from omni.isaac.lab.sim.schemas.schemas_cfg import RigidBodyPropertiesCfg,CollisionPropertiesCfg
 from omni.isaac.lab.utils.assets import ISAAC_NUCLEUS_DIR
 
 ##
@@ -78,7 +78,7 @@ def design_scene() -> tuple[dict, list[list[float]]]:
     table_cfg = sim_utils.UsdFileCfg(usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/Mounts/ThorlabsTable/table_instanceable.usd")
     table_cfg.func("/World/Origin1/Table", table_cfg, translation=(0.0, 0.0, 0.8))
     # -- Object
-    object_cfg = sim_utils.UsdFileCfg(usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/Blocks/DexCube/dex_cube_instanceable.usd",
+    cfg_cube = sim_utils.UsdFileCfg(usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/Blocks/DexCube/dex_cube_instanceable.usd",
                     scale=(0.8, 0.8, 0.8),
                     rigid_props=RigidBodyPropertiesCfg(
                         solver_position_iteration_count=16,
@@ -88,25 +88,35 @@ def design_scene() -> tuple[dict, list[list[float]]]:
                         max_depenetration_velocity=5.0,
                         disable_gravity=False,)
     )
-    Object = RigidObjectCfg
-    # Set Cube as object
-#        self.scene.object = RigidObjectCfg(
-#            prim_path="{ENV_REGEX_NS}/Object",
-#            init_state=RigidObjectCfg.InitialStateCfg(pos=[0.5, 0, 0.055], rot=[1, 0, 0, 0]),
-#            spawn=UsdFileCfg(
-#                usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/Blocks/DexCube/dex_cube_instanceable.usd",
-#                scale=(0.8, 0.8, 0.8),
-#                rigid_props=RigidBodyPropertiesCfg(
-#                    solver_position_iteration_count=16,
-#                    solver_velocity_iteration_count=1,
-#                    max_angular_velocity=1000.0,
-#                    max_linear_velocity=1000.0,
-#                    max_depenetration_velocity=5.0,
-#                    disable_gravity=False,
-#                ),
-#            ),
-#        )
+    cfg_cylinder = sim_utils.MeshCylinderCfg(
+        radius=0.05,
+        height=0.1,
+        rigid_props=RigidBodyPropertiesCfg(
+                        solver_position_iteration_count=16,
+                        solver_velocity_iteration_count=1,
+                        max_angular_velocity=1000.0,
+                        max_linear_velocity=1000.0,
+                        max_depenetration_velocity=5.0,
+                        disable_gravity=False,),
+        mass_props=sim_utils.MassPropertiesCfg(mass=0.216),
+        collision_props=CollisionPropertiesCfg(collision_enabled=True,
+                                               contact_offset=0.001,
+                                               min_torsional_patch_radius=0.008,
+                                               rest_offset=0,
+                                               torsional_patch_radius=0.1,),
+        visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.1, 0.5, 0.3),metallic=0.2),
+        physics_material=sim_utils.RigidBodyMaterialCfg(),
+    )
 
+    object_cfg1= RigidObjectCfg(prim_path="/World/Origin1/Object1",
+                               init_state=RigidObjectCfg.InitialStateCfg(pos=(0.5, 0.0, 0.8),rot=(1, 0, 0, 0)),
+                               spawn=cfg_cube)
+    object_cfg2= RigidObjectCfg(prim_path="/World/Origin1/Object2",
+                               init_state=RigidObjectCfg.InitialStateCfg(pos=(0.3, 0.0, 0.8),rot=(1, 0, 0, 0)),
+                               spawn=cfg_cylinder)
+    grasping_object1 = RigidObject(cfg=object_cfg1)
+    grasping_object2 = RigidObject(cfg=object_cfg2)
+    
     # -- Robot
     franka_arm_cfg = FRANKA_PANDA_CFG.replace(prim_path="/World/Origin1/Robot")
     franka_arm_cfg.init_state.pos = (0.0, 0.0, 0.8)
