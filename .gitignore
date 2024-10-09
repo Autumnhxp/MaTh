@@ -4,6 +4,21 @@
 **/*.so
 **/*.log*
 
+# ROS 2 workspace (root-level)
+build/
+install/
+log/
+colcon/
+
+# ROS 2 workspace (ros2_ws specific)
+ros2_ws/build/
+ros2_ws/install/
+ros2_ws/log/
+
+# Keep the src directory in both the root workspace and ros2_ws
+!src/
+!ros2_ws/src/
+
 # Omniverse
 **/*.dmp
 **/.thumbs
@@ -57,3 +72,9 @@ _build
 **/runs/*
 **/logs/*
 **/recordings/*
+
+# ROS 2 packages and CMake generated files
+CMakeFiles/
+cmake_install.cmake
+Makefile
+CMakeCache.txt
