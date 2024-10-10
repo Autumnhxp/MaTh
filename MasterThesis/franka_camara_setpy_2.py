@@ -4,11 +4,33 @@ from omni.isaac.lab.app import AppLauncher
 
 # add argparse arguments
 parser = argparse.ArgumentParser(description="This script demonstrates franka simulation environment")
+parser.add_argument(
+    "--draw",
+    action="store_true",
+    default=False,
+    help="Draw the pointcloud from camera at index specified by ``--camera_id``.",
+)
+parser.add_argument(
+    "--save",
+    action="store_true",
+    default=True,
+    help="Save the data from camera at index specified by ``--camera_id``.",
+)
+parser.add_argument(
+    "--camera_id",
+    type=int,
+    choices={0, 1},
+    default=0,
+    help=(
+        "The camera ID to use for displaying points or saving the camera data. Default is 0."
+        " The viewport will always initialize with the perspective of camera 0."
+    ),
+)
 # append AppLauncher cli args
 AppLauncher.add_app_launcher_args(parser)
 # parse the arguments
 args_cli = parser.parse_args()
-
+args_cli.enable_cameras = True
 # launch omniverse app
 app_launcher = AppLauncher(args_cli)
 simulation_app = app_launcher.app
@@ -16,14 +38,18 @@ simulation_app = app_launcher.app
 """Rest everything follows."""
 
 import numpy as np
+import os
 import torch
 
 import omni.isaac.core.utils.prims as prim_utils
+import omni.replicator.core as rep
 
 import omni.isaac.lab.sim as sim_utils
 from omni.isaac.lab.assets import Articulation,RigidObject,RigidObjectCfg
 from omni.isaac.lab.sim.schemas.schemas_cfg import RigidBodyPropertiesCfg,CollisionPropertiesCfg
 from omni.isaac.lab.utils.assets import ISAAC_NUCLEUS_DIR
+from omni.isaac.lab.sensors.camera import Camera, CameraCfg
+from omni.isaac.lab.utils import convert_dict_to_backend
 
 ##
 # Pre-defined configs
@@ -50,6 +76,35 @@ def define_origins(num_origins: int, spacing: float) -> list[list[float]]:
     # return the origins
     return env_origins.tolist()
 
+def define_sensor() -> Camera:
+    """Defines the camera sensor to add to the scene."""
+    # Setup camera sensor
+    camera_cfg = CameraCfg(
+        # This means the camera sensor will be attached to these prims.
+        prim_path="/World/Origin.*/CameraSensor",
+        update_period=0,
+        height=480,
+        width=640,
+        data_types=[
+            "rgb",
+            "distance_to_image_plane",
+            "normals",
+            "semantic_segmentation",
+            "instance_segmentation_fast",
+            "instance_id_segmentation_fast",
+        ],
+        colorize_semantic_segmentation=True,
+        colorize_instance_id_segmentation=True,
+        colorize_instance_segmentation=True,
+        spawn=sim_utils.PinholeCameraCfg(
+            focal_length=24.0, focus_distance=400.0, horizontal_aperture=20.955, clipping_range=(0.1, 1.0e5)
+        ),
+    )
+    # Create camera
+    camera = Camera(cfg=camera_cfg)
+
+    return camera
+
 
 def design_scene() -> tuple[dict, list[list[float]]]:
     """Designs the scene."""
@@ -59,6 +114,9 @@ def design_scene() -> tuple[dict, list[list[float]]]:
     # Lights
     cfg = sim_utils.DomeLightCfg(intensity=2000.0, color=(0.75, 0.75, 0.75))
     cfg.func("/World/Light", cfg)
+
+    # Create a dictionary for the scene entities
+    scene_entities = {}
 
     # Create separate groups called "Origin1", "Origin2", "Origin3"...
     # Each group will have a mount and a robot on top of it
@@ -99,23 +157,31 @@ def design_scene() -> tuple[dict, list[list[float]]]:
                                                min_torsional_patch_radius=0.008,
                                                rest_offset=0,
                                                torsional_patch_radius=0.1,),
-        visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.1, 0.5, 0.3),metallic=0.2),
+        visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.1, 0.5, 0.3),metallic=0.5),
         physics_material=sim_utils.RigidBodyMaterialCfg(),
     )
 
-    object_cfg1= RigidObjectCfg(prim_path="/World/Origin1/Object1",
-                               init_state=RigidObjectCfg.InitialStateCfg(pos=(0.5, 0.0, 0.8),rot=(1, 0, 0, 0)),
-                               spawn=cfg_cube)
-    object_cfg2= RigidObjectCfg(prim_path="/World/Origin1/Object2",
-                               init_state=RigidObjectCfg.InitialStateCfg(pos=(0.3, 0.0, 0.8),rot=(1, 0, 0, 0)),
-                               spawn=cfg_cylinder)
-    grasping_object1 = RigidObject(cfg=object_cfg1)
-    grasping_object2 = RigidObject(cfg=object_cfg2)
+    object_cfg1= RigidObjectCfg(
+        prim_path="/World/Origin1/Object1",
+        spawn=cfg_cube,
+        init_state=RigidObjectCfg.InitialStateCfg(pos=(0.5, 0.0, 0.8),rot=(1, 0, 0, 0)),
+    )
+    object_cfg2= RigidObjectCfg(
+        prim_path="/World/Origin1/Object2",
+        spawn=cfg_cylinder,
+        init_state=RigidObjectCfg.InitialStateCfg(pos=(0.3, 0.0, 0.8),rot=(1, 0, 0, 0)),
+    )
+    scene_entities[f"env1_grasping_object1"] = RigidObject(cfg=object_cfg1)
+    scene_entities[f"env1_grasping_object2"] = RigidObject(cfg=object_cfg2)
     
     # -- Robot
     franka_arm_cfg = FRANKA_PANDA_CFG.replace(prim_path="/World/Origin1/Robot")
     franka_arm_cfg.init_state.pos = (0.0, 0.0, 0.8)
-    franka_panda = Articulation(cfg=franka_arm_cfg)
+    scene_entities[f"env1_robot"] = Articulation(cfg=franka_arm_cfg)
+
+    # -- Sensors
+    camera = define_sensor()
+    scene_entities["env1_camera"] = camera
 
     # # Origin 2 with UR10
     # prim_utils.create_prim("/World/Origin2", "Xform", translation=origins[1])
@@ -171,20 +237,39 @@ def design_scene() -> tuple[dict, list[list[float]]]:
     # sawyer_arm_cfg.init_state.pos = (0.0, 0.0, 1.03)
     # sawyer = Articulation(cfg=sawyer_arm_cfg)
 
-    # return the scene information
-    scene_entities = {
-        "franka_panda": franka_panda,
-        # "ur10": ur10,
-        # "kinova_j2n7s300": kinova_j2n7s300,
-        # "kinova_j2n6s300": kinova_j2n6s300,
-        # "kinova_gen3n7": kinova_gen3n7,
-        # "sawyer": sawyer,
-    }
     return scene_entities, origins
 
 
-def run_simulator(sim: sim_utils.SimulationContext, entities: dict[str, Articulation], origins: torch.Tensor):
+def run_simulator(sim: sim_utils.SimulationContext, entities: dict, origins: torch.Tensor):
     """Runs the simulation loop."""
+
+    # Camera Initialization -------
+    # extract entities for simplified notation
+    camera: Camera = entities["env1_camera"]
+
+    # Create replicator writer
+    output_dir = os.path.join(os.path.dirname(os.path.realpath(__file__)), "output", "env1_camera")
+    rep_writer = rep.BasicWriter(
+        output_dir=output_dir,
+        frame_padding=0,
+        colorize_instance_id_segmentation=camera.cfg.colorize_instance_id_segmentation,
+        colorize_instance_segmentation=camera.cfg.colorize_instance_segmentation,
+        colorize_semantic_segmentation=camera.cfg.colorize_semantic_segmentation,
+    )
+
+    # Camera positions, targets, orientations
+    camera_positions = torch.tensor([[-1.0, -1.0, 2.5]], device=sim.device) + origins[0]
+    camera_targets = torch.tensor([[1.0, 0.5, 0.0]], device=sim.device) + origins[0]
+
+    # Set pose: There are two ways to set the pose of the camera.
+    camera.set_world_poses_from_view(camera_positions, camera_targets)
+
+    # Index of the camera to use for visualization and saving
+    camera_index = args_cli.camera_id
+
+    # Camera Initialization End ------
+
+    
     # Define simulation stepping
     sim_dt = sim.get_physics_dt()
     sim_time = 0.0
@@ -197,36 +282,86 @@ def run_simulator(sim: sim_utils.SimulationContext, entities: dict[str, Articula
             sim_time = 0.0
             count = 0
             # reset the scene entities
-            for index, robot in enumerate(entities.values()):
-                # root state
-                root_state = robot.data.default_root_state.clone()
-                root_state[:, :3] += origins[index]
-                robot.write_root_state_to_sim(root_state)
-                # set joint positions
-                joint_pos, joint_vel = robot.data.default_joint_pos.clone(), robot.data.default_joint_vel.clone()
-                robot.write_joint_state_to_sim(joint_pos, joint_vel)
-                # clear internal buffers
-                robot.reset()
-            print("[INFO]: Resetting robots state...")
+            for key, value in entities.items():
+                if key.endswith("_robot"):
+                    robot = value
+                    # root state
+                    root_state = robot.data.default_root_state.clone()
+                    num_str = key[len("env"):key.index("_robot")]
+                    index = int(num_str)-1
+                    root_state[:, :3] += origins[index]
+                    robot.write_root_state_to_sim(root_state)
+                    # set joint positions
+                    joint_pos, joint_vel = robot.data.default_joint_pos.clone(), robot.data.default_joint_vel.clone()
+                    robot.write_joint_state_to_sim(joint_pos, joint_vel)
+                    # clear internal buffers
+                    robot.reset()
+                    print("[INFO]: Resetting robots state...")
         # apply random actions to the robots
-        for robot in entities.values():
-            # generate random joint positions
-            joint_pos_target = robot.data.default_joint_pos + torch.randn_like(robot.data.joint_pos) * 0.1
-            joint_pos_target = joint_pos_target.clamp_(
-                robot.data.soft_joint_pos_limits[..., 0], robot.data.soft_joint_pos_limits[..., 1]
-            )
-            # apply action to the robot
-            robot.set_joint_position_target(joint_pos_target)
-            # write data to sim
-            robot.write_data_to_sim()
+        for key, value in entities.items():
+            if key.endswith("_robot"):
+                robot = value
+                # generate random joint positions
+                joint_pos_target = robot.data.default_joint_pos + torch.randn_like(robot.data.joint_pos) * 0.1
+                joint_pos_target = joint_pos_target.clamp_(
+                    robot.data.soft_joint_pos_limits[..., 0], robot.data.soft_joint_pos_limits[..., 1]
+                )
+                # apply action to the robot
+                robot.set_joint_position_target(joint_pos_target)
+                # write data to sim
+                robot.write_data_to_sim()
         # perform step
         sim.step()
         # update sim-time
         sim_time += sim_dt
         count += 1
         # update buffers
-        for robot in entities.values():
-            robot.update(sim_dt)
+        for key, value in entities.items():
+            if key.endswith("_robot"):
+                robot = value
+                robot.update(sim_dt)
+
+        # Camera
+        # Update camera data
+        camera.update(dt=sim_dt)
+
+        # Print camera info
+        print(camera)
+        if "rgb" in camera.data.output.keys():
+            print("Received shape of rgb image        : ", camera.data.output["rgb"].shape)
+        if "distance_to_image_plane" in camera.data.output.keys():
+            print("Received shape of depth image      : ", camera.data.output["distance_to_image_plane"].shape)
+        if "normals" in camera.data.output.keys():
+            print("Received shape of normals          : ", camera.data.output["normals"].shape)
+        if "semantic_segmentation" in camera.data.output.keys():
+            print("Received shape of semantic segm.   : ", camera.data.output["semantic_segmentation"].shape)
+        if "instance_segmentation_fast" in camera.data.output.keys():
+            print("Received shape of instance segm.   : ", camera.data.output["instance_segmentation_fast"].shape)
+        if "instance_id_segmentation_fast" in camera.data.output.keys():
+            print("Received shape of instance id segm.: ", camera.data.output["instance_id_segmentation_fast"].shape)
+        print("-------------------------------")
+
+        # Extract camera data
+        if args_cli.save:
+            # Save images from camera at camera_index
+            # note: BasicWriter only supports saving data in numpy format, so we need to convert the data to numpy.
+            # tensordict allows easy indexing of tensors in the dictionary
+            single_cam_data = convert_dict_to_backend(camera.data.output[camera_index], backend="numpy")
+
+            # Extract the other information
+            single_cam_info = camera.data.info[camera_index]
+
+            # Pack data back into replicator format to save them using its writer
+            rep_output = {"annotators": {}}
+            for key, data, info in zip(single_cam_data.keys(), single_cam_data.values(), single_cam_info.values()):
+                if info is not None:
+                    rep_output["annotators"][key] = {"render_product": {"data": data, **info}}
+                else:
+                    rep_output["annotators"][key] = {"render_product": {"data": data}}
+            # Save images
+            # Note: We need to provide On-time data for Replicator to save the images.
+            rep_output["trigger_outputs"] = {"on_time": camera.frame[camera_index]}
+            rep_writer.write(rep_output)
 
 
 def main():

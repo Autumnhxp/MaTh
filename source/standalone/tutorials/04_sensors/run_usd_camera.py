@@ -36,7 +36,7 @@ parser.add_argument(
 parser.add_argument(
     "--save",
     action="store_true",
-    default=False,
+    default=True,
     help="Save the data from camera at index specified by ``--camera_id``.",
 )
 parser.add_argument(
