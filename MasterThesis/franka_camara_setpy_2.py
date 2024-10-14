@@ -81,24 +81,28 @@ def define_sensor() -> Camera:
     # Setup camera sensor
     camera_cfg = CameraCfg(
         # This means the camera sensor will be attached to these prims.
-        prim_path="/World/Origin.*/CameraSensor",
+        prim_path="/World/Origin.*/Robot/panda_hand/CameraSensor",
         update_period=0,
-        height=480,
-        width=640,
+        height=720,
+        width=1280,
         data_types=[
             "rgb",
             "distance_to_image_plane",
             "normals",
-            "semantic_segmentation",
-            "instance_segmentation_fast",
-            "instance_id_segmentation_fast",
+            #"semantic_segmentation",
+            #"instance_segmentation_fast",
+            #"instance_id_segmentation_fast",
         ],
-        colorize_semantic_segmentation=True,
-        colorize_instance_id_segmentation=True,
-        colorize_instance_segmentation=True,
+        #colorize_semantic_segmentation=True,
+        #colorize_instance_id_segmentation=True,
+        #colorize_instance_segmentation=True,
         spawn=sim_utils.PinholeCameraCfg(
-            focal_length=24.0, focus_distance=400.0, horizontal_aperture=20.955, clipping_range=(0.1, 1.0e5)
+            focal_length=24, #focal_length=60.72
+            focus_distance=400.0, 
+            horizontal_aperture=20.955, 
+            clipping_range=(0.1, 1.0e5)
         ),
+        offset=CameraCfg.OffsetCfg(pos=(0.0, 0.0, 0.015), rot=(1.0, 0.0, 0.0, 0.0), convention="ros"),
     )
     # Create camera
     camera = Camera(cfg=camera_cfg)
@@ -252,17 +256,17 @@ def run_simulator(sim: sim_utils.SimulationContext, entities: dict, origins: tor
     rep_writer = rep.BasicWriter(
         output_dir=output_dir,
         frame_padding=0,
-        colorize_instance_id_segmentation=camera.cfg.colorize_instance_id_segmentation,
-        colorize_instance_segmentation=camera.cfg.colorize_instance_segmentation,
-        colorize_semantic_segmentation=camera.cfg.colorize_semantic_segmentation,
+        #colorize_instance_id_segmentation=camera.cfg.colorize_instance_id_segmentation,
+        #colorize_instance_segmentation=camera.cfg.colorize_instance_segmentation,
+        #colorize_semantic_segmentation=camera.cfg.colorize_semantic_segmentation,
     )
 
-    # Camera positions, targets, orientations
-    camera_positions = torch.tensor([[-1.0, -1.0, 2.5]], device=sim.device) + origins[0]
-    camera_targets = torch.tensor([[1.0, 0.5, 0.0]], device=sim.device) + origins[0]
-
-    # Set pose: There are two ways to set the pose of the camera.
-    camera.set_world_poses_from_view(camera_positions, camera_targets)
+    ## Camera positions, targets, orientations
+    #camera_positions = torch.tensor([[0.4, 0.0, 3.0]], device=sim.device) + origins[0]
+    #camera_targets = torch.tensor([[0.4, 0.0, 0.0]], device=sim.device) + origins[0]
+    #
+    ## Set pose: There are two ways to set the pose of the camera.
+    #camera.set_world_poses_from_view(camera_positions, camera_targets)
 
     # Index of the camera to use for visualization and saving
     camera_index = args_cli.camera_id
@@ -302,7 +306,8 @@ def run_simulator(sim: sim_utils.SimulationContext, entities: dict, origins: tor
             if key.endswith("_robot"):
                 robot = value
                 # generate random joint positions
-                joint_pos_target = robot.data.default_joint_pos + torch.randn_like(robot.data.joint_pos) * 0.1
+                #joint_pos_target = robot.data.default_joint_pos + torch.randn_like(robot.data.joint_pos) * 0.1
+                joint_pos_target = robot.data.default_joint_pos 
                 joint_pos_target = joint_pos_target.clamp_(
                     robot.data.soft_joint_pos_limits[..., 0], robot.data.soft_joint_pos_limits[..., 1]
                 )
