@@ -13,7 +13,7 @@ parser.add_argument(
 parser.add_argument(
     "--save",
     action="store_true",
-    default=True,
+    default=False,
     help="Save the data from camera at index specified by ``--camera_id``.",
 )
 parser.add_argument(
@@ -45,11 +45,16 @@ import omni.isaac.core.utils.prims as prim_utils
 import omni.replicator.core as rep
 
 import omni.isaac.lab.sim as sim_utils
+from omni.isaac.lab.assets import AssetBaseCfg
 from omni.isaac.lab.assets import Articulation,RigidObject,RigidObjectCfg
 from omni.isaac.lab.sim.schemas.schemas_cfg import RigidBodyPropertiesCfg,CollisionPropertiesCfg
 from omni.isaac.lab.utils.assets import ISAAC_NUCLEUS_DIR
+from omni.isaac.lab.controllers import DifferentialIKController, DifferentialIKControllerCfg
+from omni.isaac.lab.markers import VisualizationMarkers
+from omni.isaac.lab.markers.config import FRAME_MARKER_CFG
 from omni.isaac.lab.sensors.camera import Camera, CameraCfg
 from omni.isaac.lab.utils import convert_dict_to_backend
+from omni.isaac.lab.utils.math import subtract_frame_transforms
 
 ##
 # Pre-defined configs
@@ -246,7 +251,56 @@ def design_scene() -> tuple[dict, list[list[float]]]:
 
 def run_simulator(sim: sim_utils.SimulationContext, entities: dict, origins: torch.Tensor):
     """Runs the simulation loop."""
+    # Define simulation stepping
+    sim_dt = sim.get_physics_dt()
+    sim_time = 0.0
+    count = 0
+    
+    
+    # Create controller
+    diff_ik_cfg = DifferentialIKControllerCfg(command_type="pose", use_relative_mode=False, ik_method="dls")
+    diff_ik_controller = DifferentialIKController(diff_ik_cfg, num_envs=origins.shape[0], device=sim.device)
 
+    robot_info = {
+        'ee_frame_idx': None,
+        'ee_jacobi_idx': None,
+        'arm_joint_ids': None,
+    }
+
+    for key, value in entities.items():
+        if key.endswith("_robot"):
+            robot = value
+            # Obtain the frame index of the end-effector
+            robot_info['ee_frame_idx'] = robot.find_bodies("panda_hand")[0][0]
+            robot_info['ee_jacobi_idx'] = robot_info['ee_frame_idx']-1
+            # Obtain joint indices
+            robot_info['arm_joint_ids'] = robot.find_joints("panda_joint.*")[0]
+            break
+    else:
+            print("Could not find a robot")
+
+    # Define goals for the arm
+    ee_goals = [
+        [0.3, 0.3, 0.3, 0.0, 1.0, 0.0, 0.0],
+        [0.3, 0.3, 0.3, 0.0, 1.0, 0.0, 0.0],
+        [0.3, 0.3, 0.3, 0.0, 1.0, 0.0, 0.0],
+    ]
+
+    ee_goals = torch.tensor(ee_goals, device=sim.device)
+    
+    # Track the given command
+    current_goal_idx = 0
+    
+    # Create buffers to store actions
+    ik_commands = torch.zeros(origins.shape[0], diff_ik_controller.action_dim, device=sim.device)
+    ik_commands[:] = ee_goals[current_goal_idx]
+
+    # Markers
+    frame_marker_cfg = FRAME_MARKER_CFG.copy()
+    frame_marker_cfg.markers["frame"].scale = (0.1, 0.1, 0.1)
+    ee_marker = VisualizationMarkers(frame_marker_cfg.replace(prim_path="/Visuals/ee_current"))
+    goal_marker = VisualizationMarkers(frame_marker_cfg.replace(prim_path="/Visuals/ee_goal"))
+        
     # Camera Initialization -------
     # extract entities for simplified notation
     camera: Camera = entities["env1_camera"]
@@ -274,14 +328,11 @@ def run_simulator(sim: sim_utils.SimulationContext, entities: dict, origins: tor
     # Camera Initialization End ------
 
     
-    # Define simulation stepping
-    sim_dt = sim.get_physics_dt()
-    sim_time = 0.0
-    count = 0
+    
     # Simulate physics
     while simulation_app.is_running():
         # reset
-        if count % 200 == 0:
+        if count % 2000 == 0:
             # reset counters
             sim_time = 0.0
             count = 0
@@ -301,18 +352,42 @@ def run_simulator(sim: sim_utils.SimulationContext, entities: dict, origins: tor
                     # clear internal buffers
                     robot.reset()
                     print("[INFO]: Resetting robots state...")
-        # apply random actions to the robots
+                    
+                    # reset actions
+                    ik_commands[:] = ee_goals[current_goal_idx]
+                    joint_pos_des = joint_pos[:, robot_info["arm_joint_ids"]].clone()
+                    # reset controller
+                    diff_ik_controller.reset()
+                    diff_ik_controller.set_command(ik_commands)
+                    # change goal
+                    current_goal_idx = (current_goal_idx + 1) % len(ee_goals)
+                    print("[INFO]: Resetting robots controller...")
+
+        else:
+            # obtain quantities from simulation
+            jacobian = robot.root_physx_view.get_jacobians()[:, robot_info["ee_jacobi_idx"], :, robot_info["arm_joint_ids"]]
+            ee_pose_w = robot.data.body_state_w[:, robot_info["ee_frame_idx"], 0:7]
+            root_pose_w = robot.data.root_state_w[:, 0:7]
+            joint_pos = robot.data.joint_pos[:, robot_info["arm_joint_ids"]]
+            # compute frame in root frame
+            ee_pos_b, ee_quat_b = subtract_frame_transforms(
+                root_pose_w[:, 0:3], root_pose_w[:, 3:7], ee_pose_w[:, 0:3], ee_pose_w[:, 3:7]
+            )
+            # compute the joint commands
+            joint_pos_des = diff_ik_controller.compute(ee_pos_b, ee_quat_b, jacobian, joint_pos)
+
+        # apply actions to the robots
         for key, value in entities.items():
             if key.endswith("_robot"):
                 robot = value
                 # generate random joint positions
-                #joint_pos_target = robot.data.default_joint_pos + torch.randn_like(robot.data.joint_pos) * 0.1
-                joint_pos_target = robot.data.default_joint_pos 
-                joint_pos_target = joint_pos_target.clamp_(
-                    robot.data.soft_joint_pos_limits[..., 0], robot.data.soft_joint_pos_limits[..., 1]
-                )
+                # joint_pos_target = robot.data.default_joint_pos + torch.randn_like(robot.data.joint_pos) * 0.1
+                # joint_pos_target = robot.data.default_joint_pos 
+                # joint_pos_target = joint_pos_target.clamp_(
+                #     robot.data.soft_joint_pos_limits[..., 0], robot.data.soft_joint_pos_limits[..., 1]
+                # )
                 # apply action to the robot
-                robot.set_joint_position_target(joint_pos_target)
+                robot.set_joint_position_target(joint_pos_des, joint_ids=robot_info["arm_joint_ids"])
                 # write data to sim
                 robot.write_data_to_sim()
         # perform step
@@ -325,6 +400,11 @@ def run_simulator(sim: sim_utils.SimulationContext, entities: dict, origins: tor
             if key.endswith("_robot"):
                 robot = value
                 robot.update(sim_dt)
+        # obtain quantities from simulation
+        ee_pose_w = robot.data.body_state_w[:, robot_info["ee_frame_idx"], 0:7]
+        # update marker positions
+        ee_marker.visualize(ee_pose_w[:, 0:3], ee_pose_w[:, 3:7])
+        goal_marker.visualize(ik_commands[:, 0:3] + origins.shape[0], ik_commands[:, 3:7])
 
         # Camera
         # Update camera data
