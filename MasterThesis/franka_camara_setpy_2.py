@@ -61,7 +61,7 @@ from omni.isaac.lab.utils.math import subtract_frame_transforms
 ##
 # isort: off
 from omni.isaac.lab_assets import (
-    FRANKA_PANDA_CFG,
+    FRANKA_PANDA_CFG,FRANKA_PANDA_HIGH_PD_CFG
 )
 
 # isort: on
@@ -184,7 +184,7 @@ def design_scene() -> tuple[dict, list[list[float]]]:
     scene_entities[f"env1_grasping_object2"] = RigidObject(cfg=object_cfg2)
     
     # -- Robot
-    franka_arm_cfg = FRANKA_PANDA_CFG.replace(prim_path="/World/Origin1/Robot")
+    franka_arm_cfg = FRANKA_PANDA_HIGH_PD_CFG.replace(prim_path="/World/Origin1/Robot")
     franka_arm_cfg.init_state.pos = (0.0, 0.0, 0.8)
     scene_entities[f"env1_robot"] = Articulation(cfg=franka_arm_cfg)
 
@@ -281,9 +281,9 @@ def run_simulator(sim: sim_utils.SimulationContext, entities: dict, origins: tor
 
     # Define goals for the arm
     ee_goals = [
-        [0.3, 0.3, 0.3, 0.0, 1.0, 0.0, 0.0],
-        [0.3, 0.3, 0.3, 0.0, 1.0, 0.0, 0.0],
-        [0.3, 0.3, 0.3, 0.0, 1.0, 0.0, 0.0],
+        [0.4, 0.0, 0.4, 0.0, 1.0, 0.0, 0.0],
+        #[0.3, 0.3, 0.3, 0.0, 1.0, 0.0, 0.0],
+        #[0.3, 0.3, 0.3, 0.0, 1.0, 0.0, 0.0],
     ]
 
     ee_goals = torch.tensor(ee_goals, device=sim.device)
@@ -349,7 +349,6 @@ def run_simulator(sim: sim_utils.SimulationContext, entities: dict, origins: tor
                     # set joint positions
                     joint_pos, joint_vel = robot.data.default_joint_pos.clone(), robot.data.default_joint_vel.clone()
                     robot.write_joint_state_to_sim(joint_pos, joint_vel)
-                    # clear internal buffers
                     robot.reset()
                     print("[INFO]: Resetting robots state...")
                     
@@ -360,21 +359,8 @@ def run_simulator(sim: sim_utils.SimulationContext, entities: dict, origins: tor
                     diff_ik_controller.reset()
                     diff_ik_controller.set_command(ik_commands)
                     # change goal
-                    current_goal_idx = (current_goal_idx + 1) % len(ee_goals)
+                    # current_goal_idx = (current_goal_idx + 1) % len(ee_goals)
                     print("[INFO]: Resetting robots controller...")
-
-        else:
-            # obtain quantities from simulation
-            jacobian = robot.root_physx_view.get_jacobians()[:, robot_info["ee_jacobi_idx"], :, robot_info["arm_joint_ids"]]
-            ee_pose_w = robot.data.body_state_w[:, robot_info["ee_frame_idx"], 0:7]
-            root_pose_w = robot.data.root_state_w[:, 0:7]
-            joint_pos = robot.data.joint_pos[:, robot_info["arm_joint_ids"]]
-            # compute frame in root frame
-            ee_pos_b, ee_quat_b = subtract_frame_transforms(
-                root_pose_w[:, 0:3], root_pose_w[:, 3:7], ee_pose_w[:, 0:3], ee_pose_w[:, 3:7]
-            )
-            # compute the joint commands
-            joint_pos_des = diff_ik_controller.compute(ee_pos_b, ee_quat_b, jacobian, joint_pos)
 
         # apply actions to the robots
         for key, value in entities.items():
@@ -386,6 +372,26 @@ def run_simulator(sim: sim_utils.SimulationContext, entities: dict, origins: tor
                 # joint_pos_target = joint_pos_target.clamp_(
                 #     robot.data.soft_joint_pos_limits[..., 0], robot.data.soft_joint_pos_limits[..., 1]
                 # )
+
+                # obtain quantities from simulation
+                jacobian = robot.root_physx_view.get_jacobians()[:, robot_info["ee_jacobi_idx"], :, robot_info["arm_joint_ids"]]
+                ee_pose_w = robot.data.body_state_w[:, robot_info["ee_frame_idx"], 0:7]
+                
+                root_pose_w = robot.data.root_state_w[:, 0:7]
+                # Extract position and orientation
+                position = root_pose_w[:, 0:3]  # x, y, z
+                orientation = root_pose_w[:, 3:7]  # qx, qy, qz, qw
+                print(f"Position: {position}")
+                print(f"Orientation (quaternion): {orientation}")
+                
+                joint_pos = robot.data.joint_pos[:, robot_info["arm_joint_ids"]]
+                # compute frame in root frame
+                ee_pos_b, ee_quat_b = subtract_frame_transforms(
+                    root_pose_w[:, 0:3], root_pose_w[:, 3:7], ee_pose_w[:, 0:3], ee_pose_w[:, 3:7]
+                )
+                # compute the joint commands
+                joint_pos_des = diff_ik_controller.compute(ee_pos_b, ee_quat_b, jacobian, joint_pos)
+
                 # apply action to the robot
                 robot.set_joint_position_target(joint_pos_des, joint_ids=robot_info["arm_joint_ids"])
                 # write data to sim
@@ -404,7 +410,7 @@ def run_simulator(sim: sim_utils.SimulationContext, entities: dict, origins: tor
         ee_pose_w = robot.data.body_state_w[:, robot_info["ee_frame_idx"], 0:7]
         # update marker positions
         ee_marker.visualize(ee_pose_w[:, 0:3], ee_pose_w[:, 3:7])
-        goal_marker.visualize(ik_commands[:, 0:3] + origins.shape[0], ik_commands[:, 3:7])
+        goal_marker.visualize(ik_commands[:, 0:3]+root_pose_w[:, 0:3], ik_commands[:, 3:7])
 
         # Camera
         # Update camera data
