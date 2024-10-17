@@ -281,9 +281,10 @@ def run_simulator(sim: sim_utils.SimulationContext, entities: dict, origins: tor
 
     # Define goals for the arm
     ee_goals = [
-        [0.4, 0.0, 0.4, 0.0, 1.0, 0.0, 0.0],
-        #[0.3, 0.3, 0.3, 0.0, 1.0, 0.0, 0.0],
-        #[0.3, 0.3, 0.3, 0.0, 1.0, 0.0, 0.0],
+        [0.25, 0.0, 0.6, 0.0, 1.0, 0.0, 0.0],
+        [0.3, 0.0, 0.7, 0.0, 1.0, 0.0, 0.0],
+        [0.25, 0.0, 0.8, 0.0, 1.0, 0.0, 0.0],
+        [0.3, 0.3, 0.3, 0.0, 1.0, 0.0, 0.0],
     ]
 
     ee_goals = torch.tensor(ee_goals, device=sim.device)
@@ -295,11 +296,12 @@ def run_simulator(sim: sim_utils.SimulationContext, entities: dict, origins: tor
     ik_commands = torch.zeros(origins.shape[0], diff_ik_controller.action_dim, device=sim.device)
     ik_commands[:] = ee_goals[current_goal_idx]
 
+    # No marker for taking picture!
     # Markers
-    frame_marker_cfg = FRAME_MARKER_CFG.copy()
-    frame_marker_cfg.markers["frame"].scale = (0.1, 0.1, 0.1)
-    ee_marker = VisualizationMarkers(frame_marker_cfg.replace(prim_path="/Visuals/ee_current"))
-    goal_marker = VisualizationMarkers(frame_marker_cfg.replace(prim_path="/Visuals/ee_goal"))
+    # frame_marker_cfg = FRAME_MARKER_CFG.copy()
+    # frame_marker_cfg.markers["frame"].scale = (0.1, 0.1, 0.1)
+    # ee_marker = VisualizationMarkers(frame_marker_cfg.replace(prim_path="/Visuals/ee_current"))
+    # goal_marker = VisualizationMarkers(frame_marker_cfg.replace(prim_path="/Visuals/ee_goal"))
         
     # Camera Initialization -------
     # extract entities for simplified notation
@@ -332,7 +334,7 @@ def run_simulator(sim: sim_utils.SimulationContext, entities: dict, origins: tor
     # Simulate physics
     while simulation_app.is_running():
         # reset
-        if count % 2000 == 0:
+        if count % 150 == 0:
             # reset counters
             sim_time = 0.0
             count = 0
@@ -359,7 +361,7 @@ def run_simulator(sim: sim_utils.SimulationContext, entities: dict, origins: tor
                     diff_ik_controller.reset()
                     diff_ik_controller.set_command(ik_commands)
                     # change goal
-                    # current_goal_idx = (current_goal_idx + 1) % len(ee_goals)
+                    current_goal_idx = (current_goal_idx + 1) % len(ee_goals)
                     print("[INFO]: Resetting robots controller...")
 
         # apply actions to the robots
@@ -408,9 +410,11 @@ def run_simulator(sim: sim_utils.SimulationContext, entities: dict, origins: tor
                 robot.update(sim_dt)
         # obtain quantities from simulation
         ee_pose_w = robot.data.body_state_w[:, robot_info["ee_frame_idx"], 0:7]
+        
+        # No marker for taking picture!
         # update marker positions
-        ee_marker.visualize(ee_pose_w[:, 0:3], ee_pose_w[:, 3:7])
-        goal_marker.visualize(ik_commands[:, 0:3]+root_pose_w[:, 0:3], ik_commands[:, 3:7])
+        # ee_marker.visualize(ee_pose_w[:, 0:3], ee_pose_w[:, 3:7])
+        # goal_marker.visualize(ik_commands[:, 0:3]+root_pose_w[:, 0:3], ik_commands[:, 3:7])
 
         # Camera
         # Update camera data
