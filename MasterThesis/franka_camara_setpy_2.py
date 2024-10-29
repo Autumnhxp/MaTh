@@ -151,7 +151,7 @@ def design_scene() -> tuple[dict, list[list[float]]]:
                         disable_gravity=False,)
     )
     cfg_cylinder = sim_utils.MeshCylinderCfg(
-        radius=0.05,
+        radius=0.03,
         height=0.1,
         rigid_props=RigidBodyPropertiesCfg(
                         solver_position_iteration_count=16,
@@ -383,8 +383,8 @@ def run_simulator(sim: sim_utils.SimulationContext, entities: dict, origins: tor
                 # Extract position and orientation
                 position = root_pose_w[:, 0:3]  # x, y, z
                 orientation = root_pose_w[:, 3:7]  # qx, qy, qz, qw
-                print(f"Position: {position}")
-                print(f"Orientation (quaternion): {orientation}")
+                print(f"Robot Root Position: {position}")
+                print(f"Robot Root Orientation (quaternion): {orientation}")
                 
                 joint_pos = robot.data.joint_pos[:, robot_info["arm_joint_ids"]]
                 # compute frame in root frame
@@ -419,7 +419,8 @@ def run_simulator(sim: sim_utils.SimulationContext, entities: dict, origins: tor
         # Camera
         # Update camera data
         camera.update(dt=sim_dt)
-
+        camera_poses,camera_quat = camera._view.get_world_poses()
+        print("camera position:", camera_poses,"camera rotation:", camera_quat)
         # Print camera info
         print(camera)
         if "rgb" in camera.data.output.keys():
