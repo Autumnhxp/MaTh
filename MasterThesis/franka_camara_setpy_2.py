@@ -54,7 +54,7 @@ from omni.isaac.lab.markers import VisualizationMarkers
 from omni.isaac.lab.markers.config import FRAME_MARKER_CFG
 from omni.isaac.lab.sensors.camera import Camera, CameraCfg
 from omni.isaac.lab.utils import convert_dict_to_backend
-from omni.isaac.lab.utils.math import subtract_frame_transforms
+from omni.isaac.lab.utils.math import subtract_frame_transforms, matrix_from_quat
 
 ##
 # Pre-defined configs
@@ -291,6 +291,14 @@ def run_simulator(sim: sim_utils.SimulationContext, entities: dict, origins: tor
     
     # Track the given command
     current_goal_idx = 0
+
+    # Define grasping pose for the arm
+    grasp_translation_camera = np.array([0.05017354, -0.00239286, 0.70051754])
+    grasp_rotation_camera = np.array([
+    [-0.08158159,  0.0,  0.99666667],
+    [ 0.0,        -1.0,  0.0       ],
+    [ 0.99666667,  0.0,  0.08158159]
+    ])
     
     # Create buffers to store actions
     ik_commands = torch.zeros(origins.shape[0], diff_ik_controller.action_dim, device=sim.device)
@@ -361,7 +369,8 @@ def run_simulator(sim: sim_utils.SimulationContext, entities: dict, origins: tor
                     diff_ik_controller.reset()
                     diff_ik_controller.set_command(ik_commands)
                     # change goal
-                    current_goal_idx = (current_goal_idx + 1) % len(ee_goals)
+                    # current_goal_idx = (current_goal_idx + 1) % len(ee_goals)
+                    current_goal_idx = 2
                     print("[INFO]: Resetting robots controller...")
 
         # apply actions to the robots
@@ -380,11 +389,17 @@ def run_simulator(sim: sim_utils.SimulationContext, entities: dict, origins: tor
                 ee_pose_w = robot.data.body_state_w[:, robot_info["ee_frame_idx"], 0:7]
                 
                 root_pose_w = robot.data.root_state_w[:, 0:7]
-                # Extract position and orientation
-                position = root_pose_w[:, 0:3]  # x, y, z
-                orientation = root_pose_w[:, 3:7]  # qx, qy, qz, qw
-                print(f"Robot Root Position: {position}")
-                print(f"Robot Root Orientation (quaternion): {orientation}")
+                # Extract root position and orientation
+                root_position = root_pose_w[:, 0:3]  # x, y, z
+                root_orientation = root_pose_w[:, 3:7]  # qx, qy, qz, qw
+                print(f"Robot Root Position: {root_position}")
+                print(f"Robot Root Orientation (quaternion): {root_orientation}")
+
+                # Extract ee position and orientation
+                ee_position = ee_pose_w[:, 0:3]  # x, y, z
+                ee_orientation = ee_pose_w[:, 3:7]  # qx, qy, qz, qw
+                print(f"Robot EE Position: {ee_position}")
+                print(f"Robot EE Orientation (quaternion): {ee_orientation}")
                 
                 joint_pos = robot.data.joint_pos[:, robot_info["arm_joint_ids"]]
                 # compute frame in root frame
@@ -419,8 +434,13 @@ def run_simulator(sim: sim_utils.SimulationContext, entities: dict, origins: tor
         # Camera
         # Update camera data
         camera.update(dt=sim_dt)
-        camera_poses,camera_quat = camera._view.get_world_poses()
-        print("camera position:", camera_poses,"camera rotation:", camera_quat)
+        camera_poses = camera.data.pos_w
+        camera_quat = camera.data.quat_w_ros
+        print(f"Camera Position:{camera_poses}")
+        print(f"Camera Orientation:{camera_quat}")
+        camera_rotation_world = matrix_from_quat(camera_quat)
+        print(f"Camera Rotation:{camera_rotation_world}")
+        
         # Print camera info
         print(camera)
         if "rgb" in camera.data.output.keys():
