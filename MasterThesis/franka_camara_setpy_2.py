@@ -54,7 +54,7 @@ from omni.isaac.lab.markers import VisualizationMarkers
 from omni.isaac.lab.markers.config import FRAME_MARKER_CFG
 from omni.isaac.lab.sensors.camera import Camera, CameraCfg
 from omni.isaac.lab.utils import convert_dict_to_backend
-from omni.isaac.lab.utils.math import subtract_frame_transforms, matrix_from_quat
+from omni.isaac.lab.utils.math import subtract_frame_transforms, matrix_from_quat, quat_from_matrix
 
 ##
 # Pre-defined configs
@@ -185,6 +185,7 @@ def design_scene() -> tuple[dict, list[list[float]]]:
     
     # -- Robot
     franka_arm_cfg = FRANKA_PANDA_HIGH_PD_CFG.replace(prim_path="/World/Origin1/Robot")
+
     franka_arm_cfg.init_state.pos = (0.0, 0.0, 0.8)
     scene_entities[f"env1_robot"] = Articulation(cfg=franka_arm_cfg)
 
@@ -279,12 +280,77 @@ def run_simulator(sim: sim_utils.SimulationContext, entities: dict, origins: tor
     else:
             print("Could not find a robot")
 
+    # Define grasping pose for the arm
+    # Camera pose in world frame
+    camera_translation_world = torch.tensor([0.25002, -8.7417e-08, 1.5850], device='cuda:0')
+    camera_rotation_world = torch.tensor([
+        [1.0000e+00,  4.2478e-06,  7.1212e-05],
+        [4.2478e-06, -1.0000e+00, -3.5747e-07],
+        [7.1212e-05,  3.5778e-07, -1.0000e+00]
+    ], device='cuda:0')
+
+    # Grasping pose in camera frame
+    grasp_translation_camera = torch.tensor([0.05017354, -0.00239286, 0.70051754], device='cuda:0')
+    hand_traslation_from_EE = torch.tensor([0.0, 0.0, 0.1034], device='cuda:0')
+    EE_translation_camera = grasp_translation_camera - hand_traslation_from_EE
+    grasp_rotation_camera = torch.tensor([
+        [-0.08158159,  0.0,  0.99666667],
+        [ 0.0,        -1.0,  0.0       ],
+        [ 0.99666667,  0.0,  0.08158159]
+    ], device='cuda:0')
+    AnyGrasp_grasp_coordinate_rotation_isaaclab = torch.tensor([
+        [ 0.0,  0.0, 1.0],
+        [ 0.0, -1.0, 0.0],
+        [ 1.0,  0.0, 0.0]
+    ], device='cuda:0')
+    grasp_rotation_camera = torch.matmul(AnyGrasp_grasp_coordinate_rotation_isaaclab, grasp_rotation_camera)
+
+    # Transform grasping position to world frame
+    grasp_translation_world = (
+        camera_translation_world +
+        torch.matmul(camera_rotation_world, EE_translation_camera)
+    )
+
+    # Transform grasping orientation to world frame
+    grasp_rotation_world = torch.matmul(camera_rotation_world, grasp_rotation_camera)
+
+    # Output results
+    print("Grasping position in world coordinates (translation):")
+    print(grasp_translation_world)
+
+    print("Grasping orientation in world coordinates (rotation matrix):")
+    print(grasp_rotation_world.cpu().numpy())
+
+    # Robot root pose in the world frame
+    robot_root_translation_world = torch.tensor([3.7253e-09, 2.3283e-10, 0.8], device='cuda:0')
+    robot_root_orientation_world = torch.tensor([1.0, -1.4891e-10, -8.7813e-10, -8.4725e-11], device='cuda:0')  # Quaternion (w, x, y, z)
+    robot_root_rotation_world = matrix_from_quat(robot_root_orientation_world)
+
+    # Compute inverse transformation (world → robot root)
+    robot_root_rotation_inverse = robot_root_rotation_world.T  # Transpose of rotation matrix
+    robot_root_translation_inverse = -torch.matmul(robot_root_rotation_inverse, robot_root_translation_world)
+
+    # Transform grasping pose to robot root frame
+    grasp_translation_robot_root = (
+        torch.matmul(robot_root_rotation_inverse, grasp_translation_world) +
+        robot_root_translation_inverse
+    )
+    grasp_rotation_robot_root = torch.matmul(robot_root_rotation_inverse, grasp_rotation_world)
+    grasp_orientation_robot_root = quat_from_matrix(grasp_rotation_robot_root)
+    # grasp_orientation_robot_root = torch.tensor([0.0, 1.0, 0.0, 0.0], device='cuda:0')
+    # Output results
+    print("Grasping position in robot root coordinates (translation):")
+    print(grasp_translation_robot_root)
+
+    print("Grasping orientation in robot root coordinates (rotation matrix):")
+    print(grasp_rotation_robot_root.cpu().numpy())
+
+    print("Grasping orientation in robot root coordinates (quaternion):")
+    print(grasp_orientation_robot_root)
+
     # Define goals for the arm
     ee_goals = [
-        [0.25, 0.0, 0.6, 0.0, 1.0, 0.0, 0.0],
-        [0.3, 0.0, 0.7, 0.0, 1.0, 0.0, 0.0],
         [0.25, 0.0, 0.8, 0.0, 1.0, 0.0, 0.0],
-        [0.3, 0.3, 0.3, 0.0, 1.0, 0.0, 0.0],
     ]
 
     ee_goals = torch.tensor(ee_goals, device=sim.device)
@@ -292,24 +358,28 @@ def run_simulator(sim: sim_utils.SimulationContext, entities: dict, origins: tor
     # Track the given command
     current_goal_idx = 0
 
-    # Define grasping pose for the arm
-    grasp_translation_camera = np.array([0.05017354, -0.00239286, 0.70051754])
-    grasp_rotation_camera = np.array([
-    [-0.08158159,  0.0,  0.99666667],
-    [ 0.0,        -1.0,  0.0       ],
-    [ 0.99666667,  0.0,  0.08158159]
-    ])
-    
+    # Define grasp translation and orientation as a single goal
+    # grasp_orientation_robot_root = torch.cat((grasp_orientation_robot_root[3].unsqueeze(0), grasp_orientation_robot_root[0:3]), dim=0)
+    grasp_goal = torch.cat((grasp_translation_robot_root, grasp_orientation_robot_root), dim=0)  # Concatenate translation and quaternion
+
+    # Append the grasp goal to the existing ee_goals
+    ee_goals = torch.cat((ee_goals, grasp_goal.unsqueeze(0)), dim=0)  # Add as a new row
+
+    # Output the updated ee_goals
+    print("Updated ee_goals with grasping pose:")
+    print(ee_goals)
+
+
     # Create buffers to store actions
     ik_commands = torch.zeros(origins.shape[0], diff_ik_controller.action_dim, device=sim.device)
     ik_commands[:] = ee_goals[current_goal_idx]
 
     # No marker for taking picture!
     # Markers
-    # frame_marker_cfg = FRAME_MARKER_CFG.copy()
-    # frame_marker_cfg.markers["frame"].scale = (0.1, 0.1, 0.1)
-    # ee_marker = VisualizationMarkers(frame_marker_cfg.replace(prim_path="/Visuals/ee_current"))
-    # goal_marker = VisualizationMarkers(frame_marker_cfg.replace(prim_path="/Visuals/ee_goal"))
+    frame_marker_cfg = FRAME_MARKER_CFG.copy()
+    frame_marker_cfg.markers["frame"].scale = (0.1, 0.1, 0.1)
+    ee_marker = VisualizationMarkers(frame_marker_cfg.replace(prim_path="/Visuals/ee_current"))
+    goal_marker = VisualizationMarkers(frame_marker_cfg.replace(prim_path="/Visuals/ee_goal"))
         
     # Camera Initialization -------
     # extract entities for simplified notation
@@ -369,8 +439,8 @@ def run_simulator(sim: sim_utils.SimulationContext, entities: dict, origins: tor
                     diff_ik_controller.reset()
                     diff_ik_controller.set_command(ik_commands)
                     # change goal
-                    # current_goal_idx = (current_goal_idx + 1) % len(ee_goals)
-                    current_goal_idx = 2
+                    current_goal_idx = (current_goal_idx + 1) % len(ee_goals)
+                    # current_goal_idx = 2
                     print("[INFO]: Resetting robots controller...")
 
         # apply actions to the robots
@@ -407,10 +477,18 @@ def run_simulator(sim: sim_utils.SimulationContext, entities: dict, origins: tor
                     root_pose_w[:, 0:3], root_pose_w[:, 3:7], ee_pose_w[:, 0:3], ee_pose_w[:, 3:7]
                 )
                 # compute the joint commands
+                print(f"Current Commands of Controller: {diff_ik_controller._command}")
                 joint_pos_des = diff_ik_controller.compute(ee_pos_b, ee_quat_b, jacobian, joint_pos)
+                print(f"Current Desired Joints poses: {joint_pos_des}")
+                joint_ids=robot_info["arm_joint_ids"]
+                print(f"Joint ids: {joint_ids}")
+                gripper_open_poses = torch.tensor([0.04, 0.04], device='cuda:0')
+                joint_pos_des_with_gripper = torch.cat((joint_pos_des, gripper_open_poses.unsqueeze(0)), dim=-1)
+                print(f"All Desired Joints poses: {joint_pos_des}")
 
                 # apply action to the robot
-                robot.set_joint_position_target(joint_pos_des, joint_ids=robot_info["arm_joint_ids"])
+                # robot.set_joint_position_target(joint_pos_des, joint_ids=robot_info["arm_joint_ids"])
+                robot.set_joint_position_target(joint_pos_des_with_gripper)
                 # write data to sim
                 robot.write_data_to_sim()
         # perform step
@@ -428,8 +506,8 @@ def run_simulator(sim: sim_utils.SimulationContext, entities: dict, origins: tor
         
         # No marker for taking picture!
         # update marker positions
-        # ee_marker.visualize(ee_pose_w[:, 0:3], ee_pose_w[:, 3:7])
-        # goal_marker.visualize(ik_commands[:, 0:3]+root_pose_w[:, 0:3], ik_commands[:, 3:7])
+        ee_marker.visualize(ee_pose_w[:, 0:3], ee_pose_w[:, 3:7])
+        goal_marker.visualize(ik_commands[:, 0:3]+root_pose_w[:, 0:3], ik_commands[:, 3:7])
 
         # Camera
         # Update camera data
@@ -442,7 +520,7 @@ def run_simulator(sim: sim_utils.SimulationContext, entities: dict, origins: tor
         print(f"Camera Rotation:{camera_rotation_world}")
         
         # Print camera info
-        print(camera)
+        # print(camera)
         if "rgb" in camera.data.output.keys():
             print("Received shape of rgb image        : ", camera.data.output["rgb"].shape)
         if "distance_to_image_plane" in camera.data.output.keys():
