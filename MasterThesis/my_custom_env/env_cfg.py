@@ -29,7 +29,7 @@ from omni.isaac.lab.utils.assets import ISAAC_NUCLEUS_DIR
 from omni.isaac.lab.controllers.differential_ik_cfg import DifferentialIKControllerCfg
 from omni.isaac.lab.envs.mdp.actions.actions_cfg import DifferentialInverseKinematicsActionCfg
 
-from omni.isaac.lab_tasks.manager_based.manipulation.lift import mdp
+from . import mdp
 
 ##
 # Pre-defined configs
@@ -51,7 +51,7 @@ class ObjectTableSceneCfg(InteractiveSceneCfg):
 
     # robots
     robot: ArticulationCfg = FRANKA_PANDA_HIGH_PD_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
-    robot.init_state.pos = (0.0, 0.0, 0.0)
+    robot.init_state.pos = (0.0, 0.0, 0.8)
     
     # end-effector sensor:
     # Listens to the required transforms
@@ -216,7 +216,7 @@ class EventCfg:
         params={
             "pose_range": {"x": (-0.1, 0.1), "y": (-0.25, 0.25), "z": (0.0, 0.0)},
             "velocity_range": {},
-            "asset_cfg": SceneEntityCfg("object", body_names="Object"),
+            "asset_cfg": SceneEntityCfg("object2", body_names="Object_Cylinder"),
         },
     )
 
@@ -258,7 +258,7 @@ class TerminationsCfg:
     time_out = DoneTerm(func=mdp.time_out, time_out=True)
 
     object_dropping = DoneTerm(
-        func=mdp.root_height_below_minimum, params={"minimum_height": -0.05, "asset_cfg": SceneEntityCfg("object")}
+        func=mdp.root_height_below_minimum, params={"minimum_height": -0.05, "asset_cfg": SceneEntityCfg("object2")}
     )
 
 
