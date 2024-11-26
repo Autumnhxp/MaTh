@@ -42,7 +42,7 @@ def object_reached_goal(
     """
     # extract the used quantities (to enable type-hinting)
     robot: RigidObject = env.scene[robot_cfg.name]
-    object: RigidObject = env.scene[object_cfg2.name]
+    object: RigidObject = env.scene[object_cfg1.name]
     command = env.command_manager.get_command(command_name)
     # compute the desired position in the world frame
     des_pos_b = command[:, :3]

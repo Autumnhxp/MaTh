@@ -26,7 +26,7 @@ parser = argparse.ArgumentParser(description="Pick and lift state machine for li
 parser.add_argument(
     "--disable_fabric", action="store_true", default=False, help="Disable fabric and use USD I/O operations."
 )
-parser.add_argument("--num_envs", type=int, default=4, help="Number of environments to simulate.")
+parser.add_argument("--num_envs", type=int, default=32, help="Number of environments to simulate.")
 # append AppLauncher cli args
 AppLauncher.add_app_launcher_args(parser)
 # parse the arguments
@@ -39,19 +39,14 @@ simulation_app = app_launcher.app
 """Rest everything else."""
 
 import gymnasium as gym
-print(f'print gym key {gym.envs.registry.keys()}')
 import torch
 from collections.abc import Sequence
 
 import warp as wp
 
 from omni.isaac.lab.assets.rigid_object.rigid_object_data import RigidObjectData
-print(f'print gym key {gym.envs.registry.keys()}')
 
 import omni.isaac.lab_tasks  # noqa: F401
-print(f'print gym key {gym.envs.registry.keys()}')
-import my_custom_env # for own use case
-print(f'print gym key {gym.envs.registry.keys()}')
 from omni.isaac.lab_tasks.manager_based.manipulation.lift.lift_env_cfg import LiftEnvCfg
 from omni.isaac.lab_tasks.utils.parse_cfg import parse_env_cfg
 
@@ -244,14 +239,14 @@ class PickAndLiftSm:
 
 def main():
     # parse configuration
-    env_cfg = parse_env_cfg(
-        "My-Custom-Env-v0",
+    env_cfg: LiftEnvCfg = parse_env_cfg(
+        "Isaac-Lift-Cube-Franka-IK-Abs-v0",
         device=args_cli.device,
         num_envs=args_cli.num_envs,
         use_fabric=not args_cli.disable_fabric,
     )
     # create environment
-    env = gym.make("My-Custom-Env-v0", cfg=env_cfg)
+    env = gym.make("Isaac-Lift-Cube-Franka-IK-Abs-v0", cfg=env_cfg)
     # reset environment at start
     env.reset()
 
@@ -276,7 +271,7 @@ def main():
             tcp_rest_position = ee_frame_sensor.data.target_pos_w[..., 0, :].clone() - env.unwrapped.scene.env_origins
             tcp_rest_orientation = ee_frame_sensor.data.target_quat_w[..., 0, :].clone()
             # -- object frame
-            object_data: RigidObjectData = env.unwrapped.scene["object1"].data
+            object_data: RigidObjectData = env.unwrapped.scene["object"].data
             object_position = object_data.root_pos_w - env.unwrapped.scene.env_origins
             # -- target object frame
             desired_position = env.unwrapped.command_manager.get_command("object_pose")[..., :3]

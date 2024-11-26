@@ -3,6 +3,10 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
+import os
+# Get the directory of this script (my_current.py)
+current_dir = os.path.dirname(os.path.abspath(__file__))
+
 from dataclasses import MISSING
 
 import omni.isaac.lab.sim as sim_utils
@@ -16,7 +20,8 @@ from omni.isaac.lab.managers import RewardTermCfg as RewTerm
 from omni.isaac.lab.managers import SceneEntityCfg
 from omni.isaac.lab.managers import TerminationTermCfg as DoneTerm
 from omni.isaac.lab.scene import InteractiveSceneCfg
-from omni.isaac.lab.sensors.frame_transformer.frame_transformer_cfg import FrameTransformerCfg, OffsetCfg
+from omni.isaac.lab.sensors import FrameTransformerCfg
+from omni.isaac.lab.sensors.frame_transformer.frame_transformer_cfg import OffsetCfg
 from omni.isaac.lab.sim.schemas.schemas_cfg import RigidBodyPropertiesCfg, CollisionPropertiesCfg
 from omni.isaac.lab.sim.spawners.meshes import MeshCylinderCfg
 from omni.isaac.lab.sim.spawners.from_files.from_files_cfg import GroundPlaneCfg, UsdFileCfg
@@ -123,10 +128,27 @@ class ObjectTableSceneCfg(InteractiveSceneCfg):
     )
 
     # Human
-    human = AssetBaseCfg(
+    human = RigidObjectCfg(
         prim_path="{ENV_REGEX_NS}/Human",
-        init_state=AssetBaseCfg.InitialStateCfg(pos=[0.2, 0.7, 0.0], rot=[1, 0, 0, 0]),
-        spawn=UsdFileCfg(usd_path=f"{ISAAC_NUCLEUS_DIR}/People/Characters/F_Medical_01/F_Medical_01.usd"),
+        init_state=RigidObjectCfg.InitialStateCfg(pos=[0.2, 0.7, 0.0], rot=[1, 0, 0, 0]),
+        spawn=UsdFileCfg(
+            usd_path=os.path.join(current_dir, "Medical_female.usd"),
+            rigid_props=RigidBodyPropertiesCfg(
+                solver_position_iteration_count=16,
+                solver_velocity_iteration_count=1,
+                max_angular_velocity=0,
+                max_linear_velocity=0,
+                max_depenetration_velocity=5.0,
+                disable_gravity=True,
+            ),
+            mass_props=sim_utils.MassPropertiesCfg(mass=50),
+            collision_props=CollisionPropertiesCfg(
+                collision_enabled=True,
+                contact_offset=0.001,
+                min_torsional_patch_radius=0.008,
+                rest_offset=0,
+                torsional_patch_radius=0.1,),
+        ),
     )
 
     # plane
@@ -216,7 +238,7 @@ class EventCfg:
         params={
             "pose_range": {"x": (-0.1, 0.1), "y": (-0.25, 0.25), "z": (0.0, 0.0)},
             "velocity_range": {},
-            "asset_cfg": SceneEntityCfg("object2", body_names="Object_Cylinder"),
+            "asset_cfg": SceneEntityCfg("object1", body_names="Object_Cube"),
         },
     )
 
@@ -258,7 +280,7 @@ class TerminationsCfg:
     time_out = DoneTerm(func=mdp.time_out, time_out=True)
 
     object_dropping = DoneTerm(
-        func=mdp.root_height_below_minimum, params={"minimum_height": -0.05, "asset_cfg": SceneEntityCfg("object2")}
+        func=mdp.root_height_below_minimum, params={"minimum_height": -0.05, "asset_cfg": SceneEntityCfg("object1")}
     )
 
 
@@ -286,6 +308,10 @@ class MyCustomEnvCfg(ManagerBasedRLEnvCfg):
 
     # Scene settings
     scene: ObjectTableSceneCfg = ObjectTableSceneCfg(num_envs=4096, env_spacing=2.5)
+    marker_cfg = FRAME_MARKER_CFG.copy()
+    marker_cfg.markers["frame"].scale = (0.1, 0.1, 0.1)
+    marker_cfg.prim_path = "/Visuals/FrameTransformer"
+    scene.ee_frame.visualizer_cfg = marker_cfg
     # Basic settings
     observations: ObservationsCfg = ObservationsCfg()
     actions: ActionsCfg = ActionsCfg()
