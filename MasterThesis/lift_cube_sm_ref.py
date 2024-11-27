@@ -47,6 +47,7 @@ import warp as wp
 from omni.isaac.lab.assets.rigid_object.rigid_object_data import RigidObjectData
 
 import omni.isaac.lab_tasks  # noqa: F401
+import my_custom_env # for own use case
 from omni.isaac.lab_tasks.manager_based.manipulation.lift.lift_env_cfg import LiftEnvCfg
 from omni.isaac.lab_tasks.utils.parse_cfg import parse_env_cfg
 
@@ -240,13 +241,13 @@ class PickAndLiftSm:
 def main():
     # parse configuration
     env_cfg: LiftEnvCfg = parse_env_cfg(
-        "Isaac-Lift-Cube-Franka-IK-Abs-v0",
+        "My-Isaac-Lift-Cube-Franka-IK-Abs-v0",
         device=args_cli.device,
         num_envs=args_cli.num_envs,
         use_fabric=not args_cli.disable_fabric,
     )
     # create environment
-    env = gym.make("Isaac-Lift-Cube-Franka-IK-Abs-v0", cfg=env_cfg)
+    env = gym.make("My-Isaac-Lift-Cube-Franka-IK-Abs-v0", cfg=env_cfg)
     # reset environment at start
     env.reset()
 

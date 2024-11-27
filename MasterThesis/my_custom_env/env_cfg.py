@@ -3,10 +3,6 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-import os
-# Get the directory of this script (my_current.py)
-current_dir = os.path.dirname(os.path.abspath(__file__))
-
 from dataclasses import MISSING
 
 import omni.isaac.lab.sim as sim_utils
@@ -20,27 +16,14 @@ from omni.isaac.lab.managers import RewardTermCfg as RewTerm
 from omni.isaac.lab.managers import SceneEntityCfg
 from omni.isaac.lab.managers import TerminationTermCfg as DoneTerm
 from omni.isaac.lab.scene import InteractiveSceneCfg
-from omni.isaac.lab.sensors import FrameTransformerCfg
-from omni.isaac.lab.sensors.frame_transformer.frame_transformer_cfg import OffsetCfg
-from omni.isaac.lab.sim.schemas.schemas_cfg import RigidBodyPropertiesCfg, CollisionPropertiesCfg
 from omni.isaac.lab.sim.spawners.meshes import MeshCylinderCfg
+from omni.isaac.lab.sensors.frame_transformer.frame_transformer_cfg import FrameTransformerCfg
+from omni.isaac.lab.sim.schemas.schemas_cfg import RigidBodyPropertiesCfg, CollisionPropertiesCfg
 from omni.isaac.lab.sim.spawners.from_files.from_files_cfg import GroundPlaneCfg, UsdFileCfg
 from omni.isaac.lab.utils import configclass
 from omni.isaac.lab.utils.assets import ISAAC_NUCLEUS_DIR
 
-##
-# Controller
-##
-from omni.isaac.lab.controllers.differential_ik_cfg import DifferentialIKControllerCfg
-from omni.isaac.lab.envs.mdp.actions.actions_cfg import DifferentialInverseKinematicsActionCfg
-
 from . import mdp
-
-##
-# Pre-defined configs
-##
-from omni.isaac.lab.markers.config import FRAME_MARKER_CFG  # isort: skip
-from omni.isaac.lab_assets.franka import FRANKA_PANDA_HIGH_PD_CFG  # isort: skip
 
 ##
 # Scene definition
@@ -54,85 +37,41 @@ class ObjectTableSceneCfg(InteractiveSceneCfg):
     which need to set the target object, robot and end-effector frames
     """
 
-    # robots
-    robot: ArticulationCfg = FRANKA_PANDA_HIGH_PD_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
-    robot.init_state.pos = (0.0, 0.0, 0.8)
-    
-    # end-effector sensor:
-    # Listens to the required transforms
-    # marker_cfg = FRAME_MARKER_CFG.copy()
-    # marker_cfg.markers["frame"].scale = (0.1, 0.1, 0.1)
-    # marker_cfg.prim_path = "/Visuals/FrameTransformer"
-    ee_frame: FrameTransformerCfg = FrameTransformerCfg(
-            prim_path="{ENV_REGEX_NS}/Robot/panda_link0",
-            debug_vis=False,
-            # visualizer_cfg=marker_cfg,
-            target_frames=[
-                FrameTransformerCfg.FrameCfg(
-                    prim_path="{ENV_REGEX_NS}/Robot/panda_hand",
-                    name="end_effector",
-                    offset=OffsetCfg(
-                        pos=[0.0, 0.0, 0.1034],
-                    ),
-                ),
-            ],
-        )
-    
-    # target object: 
-    object1: RigidObjectCfg = RigidObjectCfg(
-            prim_path="{ENV_REGEX_NS}/Object_Cube",
-            init_state=RigidObjectCfg.InitialStateCfg(pos=[0.5, 0, 0.8], rot=[1, 0, 0, 0]),
-            spawn=UsdFileCfg(
-                usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/Blocks/DexCube/dex_cube_instanceable.usd",
-                scale=(0.8, 0.8, 0.8),
-                rigid_props=RigidBodyPropertiesCfg(
-                    solver_position_iteration_count=16,
-                    solver_velocity_iteration_count=1,
-                    max_angular_velocity=1000.0,
-                    max_linear_velocity=1000.0,
-                    max_depenetration_velocity=5.0,
-                    disable_gravity=False,
+    # robots: will be populated by agent env cfg
+    robot: ArticulationCfg = MISSING
+    # end-effector sensor: will be populated by agent env cfg
+    ee_frame: FrameTransformerCfg = MISSING
+    # target object: will be populated by agent env cfg
+    object: RigidObjectCfg = RigidObjectCfg(
+        prim_path="{ENV_REGEX_NS}/Object",
+        init_state=RigidObjectCfg.InitialStateCfg(pos=[0.5, 0, 0.055], rot=[1, 0, 0, 0]),
+        spawn=UsdFileCfg(
+            usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/Blocks/DexCube/dex_cube_instanceable.usd",
+            scale=(0.8, 0.8, 0.8),
+            rigid_props=RigidBodyPropertiesCfg(
+                solver_position_iteration_count=16,
+                solver_velocity_iteration_count=1,
+                max_angular_velocity=1000.0,
+                max_linear_velocity=1000.0,
+                max_depenetration_velocity=5.0,
+                disable_gravity=False,
                 ),
             ),
         )
-    
-    object2: RigidObjectCfg = RigidObjectCfg(
-            prim_path="{ENV_REGEX_NS}/Object_Cylinder",
-            init_state=RigidObjectCfg.InitialStateCfg(pos=[0.3, 0.0, 0.8],rot=[1, 0, 0, 0]),
-            spawn=MeshCylinderCfg(
-                radius=0.03,
-                height=0.1, 
-                rigid_props=RigidBodyPropertiesCfg(
-                    solver_position_iteration_count=16,
-                    solver_velocity_iteration_count=1,
-                    max_angular_velocity=1000.0,
-                    max_linear_velocity=1000.0,
-                    max_depenetration_velocity=5.0,
-                    disable_gravity=False,),
-                mass_props=sim_utils.MassPropertiesCfg(mass=0.216),
-                collision_props=CollisionPropertiesCfg(
-                    collision_enabled=True,
-                    contact_offset=0.001,
-                    min_torsional_patch_radius=0.008,
-                    rest_offset=0,
-                    torsional_patch_radius=0.1,),
-                visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.1, 0.5, 0.3),metallic=0.5),
-                physics_material=sim_utils.RigidBodyMaterialCfg(),
-            )
-    )
+
     # Table
     table = AssetBaseCfg(
         prim_path="{ENV_REGEX_NS}/Table",
-        init_state=AssetBaseCfg.InitialStateCfg(pos=[0.0, 0.0, 0.8], rot=[1, 0, 0, 0]),
+        init_state=AssetBaseCfg.InitialStateCfg(pos=[0.0, 0.0, 0.0], rot=[1, 0, 0, 0]),
         spawn=UsdFileCfg(usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/Mounts/ThorlabsTable/table_instanceable.usd"),
     )
 
     # Human
     human = RigidObjectCfg(
         prim_path="{ENV_REGEX_NS}/Human",
-        init_state=RigidObjectCfg.InitialStateCfg(pos=[0.2, 0.7, 0.0], rot=[1, 0, 0, 0]),
+        init_state=RigidObjectCfg.InitialStateCfg(pos=[0.2, 0.7, -0.8], rot=[1, 0, 0, 0]),
         spawn=UsdFileCfg(
-            usd_path=os.path.join(current_dir, "Medical_female.usd"),
+            usd_path="/home/student/Public/MaTh/MasterThesis/my_custom_env/Medical_female.usd",
             rigid_props=RigidBodyPropertiesCfg(
                 solver_position_iteration_count=16,
                 solver_velocity_iteration_count=1,
@@ -154,7 +93,7 @@ class ObjectTableSceneCfg(InteractiveSceneCfg):
     # plane
     plane = AssetBaseCfg(
         prim_path="/World/GroundPlane",
-        init_state=AssetBaseCfg.InitialStateCfg(pos=[0, 0, 0]),
+        init_state=AssetBaseCfg.InitialStateCfg(pos=[0, 0, -0.8]),
         spawn=GroundPlaneCfg(),
     )
 
@@ -162,6 +101,31 @@ class ObjectTableSceneCfg(InteractiveSceneCfg):
     light = AssetBaseCfg(
         prim_path="/World/light",
         spawn=sim_utils.DomeLightCfg(color=(0.75, 0.75, 0.75), intensity=3000.0),
+    )
+    # object2
+    object2: RigidObjectCfg = RigidObjectCfg(
+            prim_path="{ENV_REGEX_NS}/Object_Cylinder",
+            init_state=RigidObjectCfg.InitialStateCfg(pos=[0.3, 0.0, 0.0],rot=[1, 0, 0, 0]),
+            spawn=MeshCylinderCfg(
+                radius=0.03,
+                height=0.1, 
+                rigid_props=RigidBodyPropertiesCfg(
+                    solver_position_iteration_count=16,
+                    solver_velocity_iteration_count=1,
+                    max_angular_velocity=1000.0,
+                    max_linear_velocity=1000.0,
+                    max_depenetration_velocity=5.0,
+                    disable_gravity=False,),
+                mass_props=sim_utils.MassPropertiesCfg(mass=0.216),
+                collision_props=CollisionPropertiesCfg(
+                    collision_enabled=True,
+                    contact_offset=0.001,
+                    min_torsional_patch_radius=0.008,
+                    rest_offset=0,
+                    torsional_patch_radius=0.1,),
+                visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.1, 0.5, 0.3),metallic=0.5),
+                physics_material=sim_utils.RigidBodyMaterialCfg(),
+            )
     )
 
 
@@ -171,12 +135,12 @@ class ObjectTableSceneCfg(InteractiveSceneCfg):
 
 
 @configclass
-class CommandsCfg:  # Should be adjusted
+class CommandsCfg:
     """Command terms for the MDP."""
 
     object_pose = mdp.UniformPoseCommandCfg(
         asset_name="robot",
-        body_name="panda_hand",  
+        body_name=MISSING,  # will be set by agent env cfg
         resampling_time_range=(5.0, 5.0),
         debug_vis=True,
         ranges=mdp.UniformPoseCommandCfg.Ranges(
@@ -189,23 +153,13 @@ class CommandsCfg:  # Should be adjusted
 class ActionsCfg:
     """Action specifications for the MDP."""
 
-    arm_action = DifferentialInverseKinematicsActionCfg(
-            asset_name="robot",
-            joint_names=["panda_joint.*"],
-            body_name="panda_hand",
-            controller=DifferentialIKControllerCfg(command_type="pose", use_relative_mode=False, ik_method="dls"),
-            body_offset=DifferentialInverseKinematicsActionCfg.OffsetCfg(pos=[0.0, 0.0, 0.107]),
-        )
-    gripper_action: mdp.BinaryJointPositionActionCfg = mdp.BinaryJointPositionActionCfg(
-            asset_name="robot",
-            joint_names=["panda_finger.*"],
-            open_command_expr={"panda_finger_.*": 0.04},
-            close_command_expr={"panda_finger_.*": 0.0},
-        )
+    # will be set by agent env cfg
+    arm_action: mdp.JointPositionActionCfg = MISSING
+    gripper_action: mdp.BinaryJointPositionActionCfg = MISSING
 
 
-@configclass # Should be adjusted
-class ObservationsCfg: 
+@configclass
+class ObservationsCfg:
     """Observation specifications for the MDP."""
 
     @configclass
@@ -238,7 +192,7 @@ class EventCfg:
         params={
             "pose_range": {"x": (-0.1, 0.1), "y": (-0.25, 0.25), "z": (0.0, 0.0)},
             "velocity_range": {},
-            "asset_cfg": SceneEntityCfg("object1", body_names="Object_Cube"),
+            "asset_cfg": SceneEntityCfg("object", body_names="Object"),
         },
     )
 
@@ -280,7 +234,7 @@ class TerminationsCfg:
     time_out = DoneTerm(func=mdp.time_out, time_out=True)
 
     object_dropping = DoneTerm(
-        func=mdp.root_height_below_minimum, params={"minimum_height": -0.05, "asset_cfg": SceneEntityCfg("object1")}
+        func=mdp.root_height_below_minimum, params={"minimum_height": -0.05, "asset_cfg": SceneEntityCfg("object")}
     )
 
 
@@ -303,15 +257,11 @@ class CurriculumCfg:
 
 
 @configclass
-class MyCustomEnvCfg(ManagerBasedRLEnvCfg):
+class MyLiftEnvCfg(ManagerBasedRLEnvCfg):
     """Configuration for the lifting environment."""
 
     # Scene settings
     scene: ObjectTableSceneCfg = ObjectTableSceneCfg(num_envs=4096, env_spacing=2.5)
-    marker_cfg = FRAME_MARKER_CFG.copy()
-    marker_cfg.markers["frame"].scale = (0.1, 0.1, 0.1)
-    marker_cfg.prim_path = "/Visuals/FrameTransformer"
-    scene.ee_frame.visualizer_cfg = marker_cfg
     # Basic settings
     observations: ObservationsCfg = ObservationsCfg()
     actions: ActionsCfg = ActionsCfg()
@@ -336,4 +286,3 @@ class MyCustomEnvCfg(ManagerBasedRLEnvCfg):
         self.sim.physx.gpu_found_lost_aggregate_pairs_capacity = 1024 * 1024 * 4
         self.sim.physx.gpu_total_aggregate_pairs_capacity = 16 * 1024
         self.sim.physx.friction_correlation_distance = 0.00625
-

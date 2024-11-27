@@ -27,7 +27,7 @@ def object_reached_goal(
     command_name: str = "object_pose",
     threshold: float = 0.02,
     robot_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
-    object_cfg1: SceneEntityCfg = SceneEntityCfg("object1"),
+    object_cfg: SceneEntityCfg = SceneEntityCfg("object"),
     object_cfg2: SceneEntityCfg = SceneEntityCfg("object2")
 ) -> torch.Tensor:
     """Termination condition for the object reaching the goal position.
@@ -42,7 +42,7 @@ def object_reached_goal(
     """
     # extract the used quantities (to enable type-hinting)
     robot: RigidObject = env.scene[robot_cfg.name]
-    object: RigidObject = env.scene[object_cfg1.name]
+    object: RigidObject = env.scene[object_cfg.name]
     command = env.command_manager.get_command(command_name)
     # compute the desired position in the world frame
     des_pos_b = command[:, :3]

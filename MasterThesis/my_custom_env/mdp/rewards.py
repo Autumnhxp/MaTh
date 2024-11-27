@@ -20,24 +20,24 @@ if TYPE_CHECKING:
 def object_is_lifted(
     env: ManagerBasedRLEnv, 
     minimal_height: float, 
-    object_cfg1: SceneEntityCfg = SceneEntityCfg("object1"),
+    object_cfg: SceneEntityCfg = SceneEntityCfg("object"),
     object_cfg2: SceneEntityCfg = SceneEntityCfg("object2"),
 ) -> torch.Tensor:
     """Reward the agent for lifting the object above the minimal height."""
-    object: RigidObject = env.scene[object_cfg1.name]
+    object: RigidObject = env.scene[object_cfg.name]
     return torch.where(object.data.root_pos_w[:, 2] > minimal_height, 1.0, 0.0)
 
 
 def object_ee_distance(
     env: ManagerBasedRLEnv,
     std: float,
-    object_cfg1: SceneEntityCfg = SceneEntityCfg("object1"),
+    object_cfg: SceneEntityCfg = SceneEntityCfg("object"),
     object_cfg2: SceneEntityCfg = SceneEntityCfg("object2"),
     ee_frame_cfg: SceneEntityCfg = SceneEntityCfg("ee_frame"),
 ) -> torch.Tensor:
     """Reward the agent for reaching the object using tanh-kernel."""
     # extract the used quantities (to enable type-hinting)
-    object: RigidObject = env.scene[object_cfg1.name]
+    object: RigidObject = env.scene[object_cfg.name]
     ee_frame: FrameTransformer = env.scene[ee_frame_cfg.name]
     # Target object position: (num_envs, 3)
     cube_pos_w = object.data.root_pos_w
@@ -55,13 +55,13 @@ def object_goal_distance(
     minimal_height: float,
     command_name: str,
     robot_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
-    object_cfg1: SceneEntityCfg = SceneEntityCfg("object1"),
+    object_cfg: SceneEntityCfg = SceneEntityCfg("object"),
     object_cfg2: SceneEntityCfg = SceneEntityCfg("object2"),
 ) -> torch.Tensor:
     """Reward the agent for tracking the goal pose using tanh-kernel."""
     # extract the used quantities (to enable type-hinting)
     robot: RigidObject = env.scene[robot_cfg.name]
-    object: RigidObject = env.scene[object_cfg1.name]
+    object: RigidObject = env.scene[object_cfg.name]
     command = env.command_manager.get_command(command_name)
     # compute the desired position in the world frame
     des_pos_b = command[:, :3]

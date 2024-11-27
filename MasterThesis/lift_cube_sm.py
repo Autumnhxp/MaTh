@@ -276,7 +276,7 @@ def main():
             tcp_rest_position = ee_frame_sensor.data.target_pos_w[..., 0, :].clone() - env.unwrapped.scene.env_origins
             tcp_rest_orientation = ee_frame_sensor.data.target_quat_w[..., 0, :].clone()
             # -- object frame
-            object_data: RigidObjectData = env.unwrapped.scene["object1"].data
+            object_data: RigidObjectData = env.unwrapped.scene["object"].data
             object_position = object_data.root_pos_w - env.unwrapped.scene.env_origins
             # -- target object frame
             desired_position = env.unwrapped.command_manager.get_command("object_pose")[..., :3]
