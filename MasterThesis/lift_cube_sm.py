@@ -235,6 +235,7 @@ class PickAndLiftSm:
             ],
             device=self.device,
         )
+        print(f"print wp state:{self.sm_state_wp}")
 
         # convert transformations back to (w, x, y, z)
         des_ee_pose = self.des_ee_pose[:, [0, 1, 2, 6, 3, 4, 5]]
