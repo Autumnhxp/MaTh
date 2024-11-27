@@ -10,7 +10,7 @@ from omni.isaac.lab.controllers.differential_ik_cfg import DifferentialIKControl
 from omni.isaac.lab.envs.mdp.actions.actions_cfg import DifferentialInverseKinematicsActionCfg
 from omni.isaac.lab.utils import configclass
 
-from omni.isaac.lab_tasks.manager_based.manipulation.lift import mdp
+from . import mdp
 from my_custom_env.env_cfg import MyLiftEnvCfg
 
 ##

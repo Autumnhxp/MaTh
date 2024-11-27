@@ -3,6 +3,10 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
+import os
+# Get the directory of this script (my_current.py)
+current_dir = os.path.dirname(os.path.abspath(__file__))
+
 from dataclasses import MISSING
 
 import omni.isaac.lab.sim as sim_utils
@@ -42,8 +46,8 @@ class ObjectTableSceneCfg(InteractiveSceneCfg):
     # end-effector sensor: will be populated by agent env cfg
     ee_frame: FrameTransformerCfg = MISSING
     # target object: will be populated by agent env cfg
-    object: RigidObjectCfg = RigidObjectCfg(
-        prim_path="{ENV_REGEX_NS}/Object",
+    object1: RigidObjectCfg = RigidObjectCfg(
+        prim_path="{ENV_REGEX_NS}/Object_Cube",
         init_state=RigidObjectCfg.InitialStateCfg(pos=[0.5, 0, 0.055], rot=[1, 0, 0, 0]),
         spawn=UsdFileCfg(
             usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/Blocks/DexCube/dex_cube_instanceable.usd",
@@ -58,6 +62,32 @@ class ObjectTableSceneCfg(InteractiveSceneCfg):
                 ),
             ),
         )
+    
+    # object2
+    object2: RigidObjectCfg = RigidObjectCfg(
+            prim_path="{ENV_REGEX_NS}/Object_Cylinder",
+            init_state=RigidObjectCfg.InitialStateCfg(pos=[0.3, 0.0, 0.0],rot=[1, 0, 0, 0]),
+            spawn=MeshCylinderCfg(
+                radius=0.03,
+                height=0.1, 
+                rigid_props=RigidBodyPropertiesCfg(
+                    solver_position_iteration_count=16,
+                    solver_velocity_iteration_count=1,
+                    max_angular_velocity=1000.0,
+                    max_linear_velocity=1000.0,
+                    max_depenetration_velocity=5.0,
+                    disable_gravity=False,),
+                mass_props=sim_utils.MassPropertiesCfg(mass=0.216),
+                collision_props=CollisionPropertiesCfg(
+                    collision_enabled=True,
+                    contact_offset=0.001,
+                    min_torsional_patch_radius=0.008,
+                    rest_offset=0,
+                    torsional_patch_radius=0.1,),
+                visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.1, 0.5, 0.3),metallic=0.5),
+                physics_material=sim_utils.RigidBodyMaterialCfg(),
+            )
+    )
 
     # Table
     table = AssetBaseCfg(
@@ -71,7 +101,7 @@ class ObjectTableSceneCfg(InteractiveSceneCfg):
         prim_path="{ENV_REGEX_NS}/Human",
         init_state=RigidObjectCfg.InitialStateCfg(pos=[0.2, 0.7, -0.8], rot=[1, 0, 0, 0]),
         spawn=UsdFileCfg(
-            usd_path="/home/student/Public/MaTh/MasterThesis/my_custom_env/Medical_female.usd",
+            usd_path=os.path.join(current_dir, "Medical_female.usd"),
             rigid_props=RigidBodyPropertiesCfg(
                 solver_position_iteration_count=16,
                 solver_velocity_iteration_count=1,
@@ -101,31 +131,6 @@ class ObjectTableSceneCfg(InteractiveSceneCfg):
     light = AssetBaseCfg(
         prim_path="/World/light",
         spawn=sim_utils.DomeLightCfg(color=(0.75, 0.75, 0.75), intensity=3000.0),
-    )
-    # object2
-    object2: RigidObjectCfg = RigidObjectCfg(
-            prim_path="{ENV_REGEX_NS}/Object_Cylinder",
-            init_state=RigidObjectCfg.InitialStateCfg(pos=[0.3, 0.0, 0.0],rot=[1, 0, 0, 0]),
-            spawn=MeshCylinderCfg(
-                radius=0.03,
-                height=0.1, 
-                rigid_props=RigidBodyPropertiesCfg(
-                    solver_position_iteration_count=16,
-                    solver_velocity_iteration_count=1,
-                    max_angular_velocity=1000.0,
-                    max_linear_velocity=1000.0,
-                    max_depenetration_velocity=5.0,
-                    disable_gravity=False,),
-                mass_props=sim_utils.MassPropertiesCfg(mass=0.216),
-                collision_props=CollisionPropertiesCfg(
-                    collision_enabled=True,
-                    contact_offset=0.001,
-                    min_torsional_patch_radius=0.008,
-                    rest_offset=0,
-                    torsional_patch_radius=0.1,),
-                visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.1, 0.5, 0.3),metallic=0.5),
-                physics_material=sim_utils.RigidBodyMaterialCfg(),
-            )
     )
 
 
@@ -190,9 +195,9 @@ class EventCfg:
         func=mdp.reset_root_state_uniform,
         mode="reset",
         params={
-            "pose_range": {"x": (-0.1, 0.1), "y": (-0.25, 0.25), "z": (0.0, 0.0)},
+            "pose_range": {"x": (0.0, 0.0), "y": (0.0, 0.0), "z": (0.0, 0.0)},
             "velocity_range": {},
-            "asset_cfg": SceneEntityCfg("object", body_names="Object"),
+            "asset_cfg": SceneEntityCfg("object2", body_names="Object_Cylinder"),
         },
     )
 
@@ -234,7 +239,7 @@ class TerminationsCfg:
     time_out = DoneTerm(func=mdp.time_out, time_out=True)
 
     object_dropping = DoneTerm(
-        func=mdp.root_height_below_minimum, params={"minimum_height": -0.05, "asset_cfg": SceneEntityCfg("object")}
+        func=mdp.root_height_below_minimum, params={"minimum_height": -0.05, "asset_cfg": SceneEntityCfg("object2")}
     )
 
 
