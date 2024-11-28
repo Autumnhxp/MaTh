@@ -50,6 +50,8 @@ from omni.isaac.lab.assets.rigid_object.rigid_object_data import RigidObjectData
 import omni.isaac.lab_tasks  # noqa: F401
 import my_custom_env # for own use case
 
+from omni.isaac.lab.utils.math import subtract_frame_transforms, matrix_from_quat, quat_from_matrix
+
 
 from omni.isaac.lab_tasks.utils.parse_cfg import parse_env_cfg
 
@@ -262,6 +264,79 @@ class PickAndLiftSm:
         # convert to torch
         return torch.cat([des_ee_pose, self.des_gripper_state.unsqueeze(-1)], dim=-1)
 
+    def get_grasping_pos(self):
+        # Define grasping pose for the arm
+        # Camera pose in world frame
+        camera_translation_world = torch.tensor([0.25002, -8.7417e-08, 0.8], device=self.device)
+        camera_rotation_world = torch.tensor([
+            [1.0000e+00,  4.2478e-06,  7.1212e-05],
+            [4.2478e-06, -1.0000e+00, -3.5747e-07],
+            [7.1212e-05,  3.5778e-07, -1.0000e+00]
+        ], device=self.device)
+
+        # Grasping pose in camera frame
+        grasp_translation_camera = torch.tensor([0.05017354, -0.00239286, 0.70051754], device=self.device)
+        # hand_traslation_from_EE = torch.tensor([0.0, 0.0, 0.1034], device=self.device)
+        hand_traslation_from_EE = torch.tensor([0.0, 0.0, -0.107], device=self.device)
+        EE_translation_camera = grasp_translation_camera - hand_traslation_from_EE
+        grasp_rotation_camera = torch.tensor([
+            [-0.08158159,  0.0,  0.99666667],
+            [ 0.0,        -1.0,  0.0       ],
+            [ 0.99666667,  0.0,  0.08158159]
+        ], device=self.device)
+        AnyGrasp_grasp_coordinate_rotation_isaaclab = torch.tensor([
+            [ 0.0,  0.0, 1.0],
+            [ 0.0, -1.0, 0.0],
+            [ 1.0,  0.0, 0.0]
+        ], device=self.device)
+        grasp_rotation_camera = torch.matmul(AnyGrasp_grasp_coordinate_rotation_isaaclab, grasp_rotation_camera)
+
+        # Transform grasping position to world frame
+        grasp_translation_world = (
+            camera_translation_world +
+            torch.matmul(camera_rotation_world, EE_translation_camera)
+        )
+
+        # Transform grasping orientation to world frame
+        grasp_rotation_world = torch.matmul(camera_rotation_world, grasp_rotation_camera)
+
+        # Output results
+        print("Grasping position in world coordinates (translation):")
+        print(grasp_translation_world)
+
+        print("Grasping orientation in world coordinates (rotation matrix):")
+        print(grasp_rotation_world.cpu().numpy())
+
+        # Robot root pose in the world frame
+        robot_root_translation_world = torch.tensor([0.0, 0.0, 0.0], device=self.device)
+        robot_root_orientation_world = torch.tensor([1.0, 0.0, 0.0, 0.0], device=self.device)  # Quaternion (w, x, y, z)
+        robot_root_rotation_world = matrix_from_quat(robot_root_orientation_world)
+
+        # Compute inverse transformation (world → robot root)
+        robot_root_rotation_inverse = robot_root_rotation_world.T  # Transpose of rotation matrix
+        robot_root_translation_inverse = -torch.matmul(robot_root_rotation_inverse, robot_root_translation_world)
+
+        # Transform grasping pose to robot root frame
+        grasp_translation_robot_root = (
+            torch.matmul(robot_root_rotation_inverse, grasp_translation_world) +
+            robot_root_translation_inverse
+        )
+        grasp_rotation_robot_root = torch.matmul(robot_root_rotation_inverse, grasp_rotation_world)
+        grasp_orientation_robot_root = quat_from_matrix(grasp_rotation_robot_root)
+        # grasp_orientation_robot_root = torch.tensor([0.0, 1.0, 0.0, 0.0], device='cuda:0')
+        # Output results
+        print("Grasping position in robot root coordinates (translation):")
+        print(grasp_translation_robot_root)
+
+        print("Grasping orientation in robot root coordinates (rotation matrix):")
+        print(grasp_rotation_robot_root.cpu().numpy())
+
+        print("Grasping orientation in robot root coordinates (quaternion):")
+        print(grasp_orientation_robot_root)
+
+        # Define grasp translation and orientation as a single goal
+        return torch.cat((grasp_translation_robot_root, grasp_orientation_robot_root), dim=0)  # Concatenate translation and quaternion
+
 
 def main():
     # parse configuration
@@ -296,6 +371,7 @@ def main():
             ee_frame_sensor = env.unwrapped.scene["ee_frame"]
             tcp_rest_position = ee_frame_sensor.data.target_pos_w[..., 0, :].clone() - env.unwrapped.scene.env_origins
             tcp_rest_orientation = ee_frame_sensor.data.target_quat_w[..., 0, :].clone()
+            print(f"print current ee_frame:{torch.cat([tcp_rest_position, tcp_rest_orientation], dim=-1)}")
             # -- object frame
             object_data: RigidObjectData = env.unwrapped.scene["object2"].data
             object_position = object_data.root_pos_w - env.unwrapped.scene.env_origins
@@ -304,11 +380,20 @@ def main():
             desired_position = env.unwrapped.command_manager.get_command("object_pose")[..., :3]
 
             # advance state machine
+            # actions = pick_sm.compute(
+            #    torch.cat([tcp_rest_position, tcp_rest_orientation], dim=-1),
+            #    torch.cat([object_position, desired_orientation], dim=-1),
+            #    torch.cat([desired_position, desired_orientation], dim=-1),
+            # )
+            # advance state machine anygrasp
+            # grasp_goal = torch.tensor([0.25, 0.0, 0.8, 0.0, 1.0, 0.0, 0.0], device=self.device).repeat(self.num_envs, 1)
+            grasp_goal = pick_sm.get_grasping_pos().repeat(env.unwrapped.num_envs, 1)
             actions = pick_sm.compute(
                 torch.cat([tcp_rest_position, tcp_rest_orientation], dim=-1),
-                torch.cat([object_position, desired_orientation], dim=-1),
+                grasp_goal,
                 torch.cat([desired_position, desired_orientation], dim=-1),
             )
+
             print(f"print current actions:{actions}")
             # reset state machine
             if dones.any():
