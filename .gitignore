@@ -26,7 +26,7 @@ ros2_ws/log/
 # usd
 **/*.usd
 **/**/*.usd
-!MasterThesis/my_custom_env/Medical_female.usd
+MasterThesis/my_custom_env/Medical_female.usd
 
 
 # Python
