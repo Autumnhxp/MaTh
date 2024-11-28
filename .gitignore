@@ -23,6 +23,8 @@ ros2_ws/log/
 **/*.dmp
 **/.thumbs
 
+# usd
+**/*.usd
 
 # Python
 .DS_Store
