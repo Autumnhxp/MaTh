@@ -39,20 +39,18 @@ simulation_app = app_launcher.app
 """Rest everything else."""
 
 import gymnasium as gym
-print(f'print gym key {gym.envs.registry.keys()}')
 import torch
 from collections.abc import Sequence
 
 import warp as wp
 
 from omni.isaac.lab.assets.rigid_object.rigid_object_data import RigidObjectData
-print(f'print gym key {gym.envs.registry.keys()}')
 
+# env registration in gym
 import omni.isaac.lab_tasks  # noqa: F401
-print(f'print gym key {gym.envs.registry.keys()}')
 import my_custom_env # for own use case
-print(f'print gym key {gym.envs.registry.keys()}')
-from omni.isaac.lab_tasks.manager_based.manipulation.lift.lift_env_cfg import LiftEnvCfg
+
+
 from omni.isaac.lab_tasks.utils.parse_cfg import parse_env_cfg
 
 # initialize warp
@@ -288,7 +286,7 @@ def main():
                 torch.cat([object_position, desired_orientation], dim=-1),
                 torch.cat([desired_position, desired_orientation], dim=-1),
             )
-
+            print(f"print current actions{actions}")
             # reset state machine
             if dones.any():
                 pick_sm.reset_idx(dones.nonzero(as_tuple=False).squeeze(-1))
