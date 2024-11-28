@@ -78,12 +78,12 @@ class PickSmState:
 class PickSmWaitTime:
     """Additional wait times (in s) for states for before switching."""
 
-    REST = wp.constant(0.2)
-    APPROACH_ABOVE_OBJECT = wp.constant(0.5)
-    APPROACH_OBJECT = wp.constant(0.6)
+    REST = wp.constant(0.5)
+    APPROACH_ABOVE_OBJECT = wp.constant(1.5)
+    APPROACH_OBJECT = wp.constant(1.6)
     GRASP_OBJECT = wp.constant(0.3)
     LIFT_OBJECT = wp.constant(1.0)
-    CAMERA = wp.constant(0.5)
+    CAMERA = wp.constant(3)
 
 
 @wp.kernel
@@ -93,6 +93,7 @@ def infer_state_machine(
     sm_wait_time: wp.array(dtype=float),
     ee_pose: wp.array(dtype=wp.transform),
     camera_pose: wp.array(dtype=wp.transform),
+    default_pose:wp.array(dtype=wp.transform),
     object_pose: wp.array(dtype=wp.transform),
     des_object_pose: wp.array(dtype=wp.transform),
     des_ee_pose: wp.array(dtype=wp.transform),
@@ -113,7 +114,7 @@ def infer_state_machine(
             sm_state[tid] = PickSmState.CAMERA
             sm_wait_time[tid] = 0.0
     elif state == PickSmState.CAMERA:
-        des_ee_pose[tid] = wp.transform_multiply(offset[tid], camera_pose[tid])
+        des_ee_pose[tid] = camera_pose[tid]
         gripper_state[tid] = GripperState.OPEN
         # wait for a while
         if sm_wait_time[tid] >= PickSmWaitTime.CAMERA:
@@ -121,7 +122,7 @@ def infer_state_machine(
             sm_state[tid] = PickSmState.APPROACH_ABOVE_OBJECT
             sm_wait_time[tid] = 0.0
     elif state == PickSmState.APPROACH_ABOVE_OBJECT:
-        des_ee_pose[tid] = wp.transform_multiply(offset[tid], object_pose[tid])
+        des_ee_pose[tid] = default_pose[tid]
         gripper_state[tid] = GripperState.OPEN
         # TODO: error between current and desired ee pose below threshold
         # wait for a while
@@ -190,9 +191,11 @@ class PickAndLiftSm:
         self.sm_dt = torch.full((self.num_envs,), self.dt, device=self.device)
         self.sm_state = torch.full((self.num_envs,), 0, dtype=torch.int32, device=self.device)
         self.sm_wait_time = torch.zeros((self.num_envs,), device=self.device)
+        self.default_pose = torch.tensor([0.3, 0.0, 0.3, 0.0, 1.0, 0.0, 0.0], device=self.device).repeat(self.num_envs, 1)
+        self.default_pose = self.default_pose[:, [0, 1, 2, 4, 5, 6, 3]]
 
         # camera position
-        self.camera_pose = torch.tensor([0.25, 0.0, 0.7, 0.0, 1.0, 0.0, 0.0], device=self.device).repeat(self.num_envs, 1)
+        self.camera_pose = torch.tensor([0.25, 0.0, 0.8, 0.0, 1.0, 0.0, 0.0], device=self.device).repeat(self.num_envs, 1)
         self.camera_pose = self.camera_pose[:, [0, 1, 2, 4, 5, 6, 3]]
 
         # desired state
@@ -209,6 +212,7 @@ class PickAndLiftSm:
         self.sm_state_wp = wp.from_torch(self.sm_state, wp.int32)
         self.sm_wait_time_wp = wp.from_torch(self.sm_wait_time, wp.float32)
         self.camera_pose_wp = wp.from_torch(self.camera_pose.contiguous(), wp.transform)
+        self.default_pose_wp = wp.from_torch(self.default_pose.contiguous(), wp.transform)
         self.des_ee_pose_wp = wp.from_torch(self.des_ee_pose, wp.transform)
         self.des_gripper_state_wp = wp.from_torch(self.des_gripper_state, wp.float32)
         self.offset_wp = wp.from_torch(self.offset, wp.transform)
@@ -242,6 +246,7 @@ class PickAndLiftSm:
                 self.sm_wait_time_wp,
                 ee_pose_wp,
                 self.camera_pose_wp,
+                self.default_pose_wp,
                 object_pose_wp,
                 des_object_pose_wp,
                 self.des_ee_pose_wp,
