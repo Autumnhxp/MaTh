@@ -26,7 +26,7 @@ parser = argparse.ArgumentParser(description="Pick and lift state machine for li
 parser.add_argument(
     "--disable_fabric", action="store_true", default=False, help="Disable fabric and use USD I/O operations."
 )
-parser.add_argument("--num_envs", type=int, default=4, help="Number of environments to simulate.")
+parser.add_argument("--num_envs", type=int, default=2, help="Number of environments to simulate.")
 # append AppLauncher cli args
 AppLauncher.add_app_launcher_args(parser)
 # parse the arguments
@@ -72,6 +72,7 @@ class PickSmState:
     APPROACH_OBJECT = wp.constant(2)
     GRASP_OBJECT = wp.constant(3)
     LIFT_OBJECT = wp.constant(4)
+    CAMERA = wp.constant(5)
 
 
 class PickSmWaitTime:
@@ -82,6 +83,7 @@ class PickSmWaitTime:
     APPROACH_OBJECT = wp.constant(0.6)
     GRASP_OBJECT = wp.constant(0.3)
     LIFT_OBJECT = wp.constant(1.0)
+    CAMERA = wp.constant(0.5)
 
 
 @wp.kernel
@@ -90,6 +92,7 @@ def infer_state_machine(
     sm_state: wp.array(dtype=int),
     sm_wait_time: wp.array(dtype=float),
     ee_pose: wp.array(dtype=wp.transform),
+    camera_pose: wp.array(dtype=wp.transform),
     object_pose: wp.array(dtype=wp.transform),
     des_object_pose: wp.array(dtype=wp.transform),
     des_ee_pose: wp.array(dtype=wp.transform),
@@ -106,6 +109,14 @@ def infer_state_machine(
         gripper_state[tid] = GripperState.OPEN
         # wait for a while
         if sm_wait_time[tid] >= PickSmWaitTime.REST:
+            # move to next state and reset wait time
+            sm_state[tid] = PickSmState.CAMERA
+            sm_wait_time[tid] = 0.0
+    elif state == PickSmState.CAMERA:
+        des_ee_pose[tid] = wp.transform_multiply(offset[tid], camera_pose[tid])
+        gripper_state[tid] = GripperState.OPEN
+        # wait for a while
+        if sm_wait_time[tid] >= PickSmWaitTime.CAMERA:
             # move to next state and reset wait time
             sm_state[tid] = PickSmState.APPROACH_ABOVE_OBJECT
             sm_wait_time[tid] = 0.0
@@ -180,6 +191,10 @@ class PickAndLiftSm:
         self.sm_state = torch.full((self.num_envs,), 0, dtype=torch.int32, device=self.device)
         self.sm_wait_time = torch.zeros((self.num_envs,), device=self.device)
 
+        # camera position
+        self.camera_pose = torch.tensor([0.25, 0.0, 0.7, 0.0, 1.0, 0.0, 0.0], device=self.device).repeat(self.num_envs, 1)
+        self.camera_pose = self.camera_pose[:, [0, 1, 2, 4, 5, 6, 3]]
+
         # desired state
         self.des_ee_pose = torch.zeros((self.num_envs, 7), device=self.device)
         self.des_gripper_state = torch.full((self.num_envs,), 0.0, device=self.device)
@@ -193,6 +208,7 @@ class PickAndLiftSm:
         self.sm_dt_wp = wp.from_torch(self.sm_dt, wp.float32)
         self.sm_state_wp = wp.from_torch(self.sm_state, wp.int32)
         self.sm_wait_time_wp = wp.from_torch(self.sm_wait_time, wp.float32)
+        self.camera_pose_wp = wp.from_torch(self.camera_pose.contiguous(), wp.transform)
         self.des_ee_pose_wp = wp.from_torch(self.des_ee_pose, wp.transform)
         self.des_gripper_state_wp = wp.from_torch(self.des_gripper_state, wp.float32)
         self.offset_wp = wp.from_torch(self.offset, wp.transform)
@@ -225,6 +241,7 @@ class PickAndLiftSm:
                 self.sm_state_wp,
                 self.sm_wait_time_wp,
                 ee_pose_wp,
+                self.camera_pose_wp,
                 object_pose_wp,
                 des_object_pose_wp,
                 self.des_ee_pose_wp,
@@ -277,6 +294,7 @@ def main():
             # -- object frame
             object_data: RigidObjectData = env.unwrapped.scene["object2"].data
             object_position = object_data.root_pos_w - env.unwrapped.scene.env_origins
+            print(f"print current object pos:{torch.cat([object_position, desired_orientation], dim=-1)}")
             # -- target object frame
             desired_position = env.unwrapped.command_manager.get_command("object_pose")[..., :3]
 
@@ -286,7 +304,7 @@ def main():
                 torch.cat([object_position, desired_orientation], dim=-1),
                 torch.cat([desired_position, desired_orientation], dim=-1),
             )
-            print(f"print current actions{actions}")
+            print(f"print current actions:{actions}")
             # reset state machine
             if dones.any():
                 pick_sm.reset_idx(dones.nonzero(as_tuple=False).squeeze(-1))
