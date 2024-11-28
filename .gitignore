@@ -25,6 +25,9 @@ ros2_ws/log/
 
 # usd
 **/*.usd
+**/**/*.usd
+!MasterThesis/my_custom_env/Medical_female.usd
+
 
 # Python
 .DS_Store
