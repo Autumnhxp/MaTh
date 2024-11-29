@@ -38,22 +38,35 @@ The libraries employed include:
 
 1. Clone this repository:
    ```bash
-   git clone https://github.com/yourusername/robotic-object-detection-retrieval.git
+   git clone https://github.com/Autumnhxp/MaTh.git
    ```
    
 2. Navigate to the project directory:
    ```bash
-   cd robotic-object-detection-retrieval
+   cd MaTh
    ```
-3. Install the necessary dependencies:
+3. Creating Isaac Sim virtual environment:
    ```bash
-   pip install -r requirements.txt
+   # create a virtual environment named isaaclab with python3.10
+   python3.10 -m venv isaaclab
+   # activate the virtual environment
+   source isaaclab/bin/activate
    ```
+4. Installing a CUDA-enabled PyTorch 2.4.0 build based on the CUDA version available on your system.
+   ```bash
+   pip install torch==2.4.0 --index-url https://download.pytorch.org/whl/cu118
+   ```
+5. Installing Issac Sim:
+   ```bash
+   pip install --upgrade pip
+   pip install isaacsim==4.2.0.2 --extra-index-url https://pypi.nvidia.com
+   ```
+   
 
 ### Running the Project
 1. Execute the lift_cube_sm script to start the object detection and retrieval system in isaaclab virtual environment:
   ```bash
-  python /MasterThesis/lift_cube_sm.py
+  (isaaclab) python /MasterThesis/lift_cube_sm.py
   ```
 
 ---
