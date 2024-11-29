@@ -1,4 +1,4 @@
-![Automatic Robotic Object Detection and Retrieval](https://github.com/Autumnhxp/MaTh/blob/main/MasterThesis/doc/Automatic%20Robotic%20Object%20Detection%20and%20Retrieval.gif)
+![Automatic Robotic Object Detection and Retrieval](https://github.com/Autumnhxp/MaTh/blob/main/MasterThesis/docs/Automatic%20Robotic%20Object%20Detection%20and%20Retrieval.gif)
 # Automatic Robotic Object Detection and Retrieval
 
 Welcome to the **Automatic Robotic Object Detection and Retrieval** repository! This project is part of a Master's thesis, developed in collaboration with the **Human-Centered Computing and Extended Reality Lab**. The goal of this project is to implement a system for detecting and retrieving objects using robotic mechanisms, leveraging cutting-edge simulation and AI technologies.
