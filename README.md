@@ -1,4 +1,5 @@
 **Please check the [MasterThesis](MasterThesis) folder**
+---
 ![Isaac Lab](docs/source/_static/isaaclab.jpg)
 
 ---
