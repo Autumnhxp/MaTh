@@ -214,6 +214,9 @@ class PickAndLiftSm:
         self.des_ee_pose = torch.zeros((self.num_envs, 7), device=self.device)
         self.des_gripper_state = torch.full((self.num_envs,), 0.0, device=self.device)
 
+        # camera state
+        self.camera_state = torch.full((self.num_envs,), 0.0, device=self.device)
+
         # approach above object offset
         self.offset = torch.zeros((self.num_envs, 7), device=self.device)
         self.offset[:, 2] = 0.1
@@ -227,6 +230,7 @@ class PickAndLiftSm:
         self.default_pose_wp = wp.from_torch(self.default_pose.contiguous(), wp.transform)
         self.des_ee_pose_wp = wp.from_torch(self.des_ee_pose, wp.transform)
         self.des_gripper_state_wp = wp.from_torch(self.des_gripper_state, wp.float32)
+        self.camera_state_wp = wp.from_torch(self.camera_state, wp.float32)
         self.offset_wp = wp.from_torch(self.offset, wp.transform)
 
     def reset_idx(self, env_ids: Sequence[int] = None):
