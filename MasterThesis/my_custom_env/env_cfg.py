@@ -21,6 +21,7 @@ from omni.isaac.lab.managers import SceneEntityCfg
 from omni.isaac.lab.managers import TerminationTermCfg as DoneTerm
 from omni.isaac.lab.scene import InteractiveSceneCfg
 from omni.isaac.lab.sim.spawners.meshes import MeshCylinderCfg
+from omni.isaac.lab.sensors.camera import CameraCfg
 from omni.isaac.lab.sensors.frame_transformer.frame_transformer_cfg import FrameTransformerCfg
 from omni.isaac.lab.sim.schemas.schemas_cfg import RigidBodyPropertiesCfg, CollisionPropertiesCfg
 from omni.isaac.lab.sim.spawners.from_files.from_files_cfg import GroundPlaneCfg, UsdFileCfg
@@ -133,6 +134,27 @@ class ObjectTableSceneCfg(InteractiveSceneCfg):
         spawn=sim_utils.DomeLightCfg(color=(0.75, 0.75, 0.75), intensity=3000.0),
     )
 
+    # camera
+    camera = CameraCfg(
+        # This means the camera sensor will be attached to these prims.
+        prim_path="{ENV_REGEX_NS}/Robot/panda_hand/CameraSensor",
+        update_period=0,
+        height=720,
+        width=1280,
+        data_types=[
+            "rgb",
+            "distance_to_image_plane",
+            "normals",
+        ],
+
+        spawn=sim_utils.PinholeCameraCfg(
+            focal_length=24, #focal_length=60.72
+            focus_distance=400.0, 
+            horizontal_aperture=20.955, 
+            clipping_range=(0.1, 1.0e5)
+        ),
+        offset=CameraCfg.OffsetCfg(pos=(0.0, 0.0, 0.015), rot=(1.0, 0.0, 0.0, 0.0), convention="ros"),
+    )
 
 ##
 # MDP settings

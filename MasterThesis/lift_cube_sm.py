@@ -58,6 +58,9 @@ from omni.isaac.lab_tasks.utils.parse_cfg import parse_env_cfg
 # initialize warp
 wp.init()
 
+class CameraState:
+    ON = wp.constant(1.0)
+    Off = wp.constant(-1.0)
 
 class GripperState:
     """States for the gripper."""
@@ -100,6 +103,7 @@ def infer_state_machine(
     des_object_pose: wp.array(dtype=wp.transform),
     des_ee_pose: wp.array(dtype=wp.transform),
     gripper_state: wp.array(dtype=float),
+    camera_state: wp.array(dtype=float),
     offset: wp.array(dtype=wp.transform),
 ):
     # retrieve thread id
@@ -110,6 +114,7 @@ def infer_state_machine(
     if state == PickSmState.REST:
         des_ee_pose[tid] = ee_pose[tid]
         gripper_state[tid] = GripperState.OPEN
+        camera_state[tid] = CameraState.Off
         # wait for a while
         if sm_wait_time[tid] >= PickSmWaitTime.REST:
             # move to next state and reset wait time
@@ -118,6 +123,7 @@ def infer_state_machine(
     elif state == PickSmState.CAMERA:
         des_ee_pose[tid] = camera_pose[tid]
         gripper_state[tid] = GripperState.OPEN
+        camera_state[tid] = CameraState.ON
         # wait for a while
         if sm_wait_time[tid] >= PickSmWaitTime.CAMERA:
             # move to next state and reset wait time
@@ -126,6 +132,7 @@ def infer_state_machine(
     elif state == PickSmState.APPROACH_ABOVE_OBJECT:
         des_ee_pose[tid] = default_pose[tid]
         gripper_state[tid] = GripperState.OPEN
+        camera_state[tid] = CameraState.Off
         # TODO: error between current and desired ee pose below threshold
         # wait for a while
         if sm_wait_time[tid] >= PickSmWaitTime.APPROACH_OBJECT:
@@ -135,6 +142,7 @@ def infer_state_machine(
     elif state == PickSmState.APPROACH_OBJECT:
         des_ee_pose[tid] = object_pose[tid]
         gripper_state[tid] = GripperState.OPEN
+        camera_state[tid] = CameraState.Off
         # TODO: error between current and desired ee pose below threshold
         # wait for a while
         if sm_wait_time[tid] >= PickSmWaitTime.APPROACH_OBJECT:
@@ -144,6 +152,7 @@ def infer_state_machine(
     elif state == PickSmState.GRASP_OBJECT:
         des_ee_pose[tid] = object_pose[tid]
         gripper_state[tid] = GripperState.CLOSE
+        camera_state[tid] = CameraState.Off
         # wait for a while
         if sm_wait_time[tid] >= PickSmWaitTime.GRASP_OBJECT:
             # move to next state and reset wait time
@@ -152,6 +161,7 @@ def infer_state_machine(
     elif state == PickSmState.LIFT_OBJECT:
         des_ee_pose[tid] = des_object_pose[tid]
         gripper_state[tid] = GripperState.CLOSE
+        camera_state[tid] = CameraState.Off
         # TODO: error between current and desired ee pose below threshold
         # wait for a while
         if sm_wait_time[tid] >= PickSmWaitTime.LIFT_OBJECT:
@@ -253,6 +263,7 @@ class PickAndLiftSm:
                 des_object_pose_wp,
                 self.des_ee_pose_wp,
                 self.des_gripper_state_wp,
+                self.camera_state_wp,
                 self.offset_wp,
             ],
             device=self.device,
