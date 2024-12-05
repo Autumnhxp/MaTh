@@ -167,7 +167,7 @@ class CommandsCfg:
 
     object_pose = mdp.UniformPoseCommandCfg(
         asset_name="robot",
-        body_name=MISSING,  # will be set by agent env cfg
+        body_name= MISSING,  # will be set by agent env cfg
         resampling_time_range=(10.0, 10.0), # need to be adjusted
         debug_vis=False, # adjust for camera use
         ranges=mdp.UniformPoseCommandCfg.Ranges(
