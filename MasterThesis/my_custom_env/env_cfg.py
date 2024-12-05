@@ -169,7 +169,7 @@ class CommandsCfg:
         asset_name="robot",
         body_name=MISSING,  # will be set by agent env cfg
         resampling_time_range=(10.0, 10.0), # need to be adjusted
-        debug_vis=True,
+        debug_vis=False, # adjust for camera use
         ranges=mdp.UniformPoseCommandCfg.Ranges(
             pos_x=(0.4, 0.6), pos_y=(-0.25, 0.25), pos_z=(0.25, 0.5), roll=(0.0, 0.0), pitch=(0.0, 0.0), yaw=(0.0, 0.0)
         ),

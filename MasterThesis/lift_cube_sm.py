@@ -39,7 +39,11 @@ simulation_app = app_launcher.app
 """Rest everything else."""
 
 import gymnasium as gym
+import os
 import torch
+
+import omni.replicator.core as rep
+
 from collections.abc import Sequence
 
 import warp as wp
@@ -49,7 +53,7 @@ from omni.isaac.lab.assets.rigid_object.rigid_object_data import RigidObjectData
 # env registration in gym
 import omni.isaac.lab_tasks  # noqa: F401
 import my_custom_env # for own use case
-
+from omni.isaac.lab.utils import convert_dict_to_backend
 from omni.isaac.lab.utils.math import subtract_frame_transforms, matrix_from_quat, quat_from_matrix
 
 
@@ -58,7 +62,7 @@ from omni.isaac.lab_tasks.utils.parse_cfg import parse_env_cfg
 # initialize warp
 wp.init()
 
-class CameraState:
+class TakeFoto:
     ON = wp.constant(1.0)
     Off = wp.constant(-1.0)
 
@@ -103,7 +107,7 @@ def infer_state_machine(
     des_object_pose: wp.array(dtype=wp.transform),
     des_ee_pose: wp.array(dtype=wp.transform),
     gripper_state: wp.array(dtype=float),
-    camera_state: wp.array(dtype=float),
+    take_foto: wp.array(dtype=float),
     offset: wp.array(dtype=wp.transform),
 ):
     # retrieve thread id
@@ -114,7 +118,7 @@ def infer_state_machine(
     if state == PickSmState.REST:
         des_ee_pose[tid] = ee_pose[tid]
         gripper_state[tid] = GripperState.OPEN
-        camera_state[tid] = CameraState.Off
+        take_foto[tid] = TakeFoto.Off
         # wait for a while
         if sm_wait_time[tid] >= PickSmWaitTime.REST:
             # move to next state and reset wait time
@@ -123,16 +127,17 @@ def infer_state_machine(
     elif state == PickSmState.CAMERA:
         des_ee_pose[tid] = camera_pose[tid]
         gripper_state[tid] = GripperState.OPEN
-        camera_state[tid] = CameraState.ON
+        take_foto[tid] = TakeFoto.Off
         # wait for a while
         if sm_wait_time[tid] >= PickSmWaitTime.CAMERA:
+            take_foto[tid] = TakeFoto.ON
             # move to next state and reset wait time
             sm_state[tid] = PickSmState.APPROACH_ABOVE_OBJECT
             sm_wait_time[tid] = 0.0
     elif state == PickSmState.APPROACH_ABOVE_OBJECT:
         des_ee_pose[tid] = default_pose[tid]
         gripper_state[tid] = GripperState.OPEN
-        camera_state[tid] = CameraState.Off
+        take_foto[tid] = TakeFoto.Off
         # TODO: error between current and desired ee pose below threshold
         # wait for a while
         if sm_wait_time[tid] >= PickSmWaitTime.APPROACH_OBJECT:
@@ -142,7 +147,7 @@ def infer_state_machine(
     elif state == PickSmState.APPROACH_OBJECT:
         des_ee_pose[tid] = object_pose[tid]
         gripper_state[tid] = GripperState.OPEN
-        camera_state[tid] = CameraState.Off
+        take_foto[tid] = TakeFoto.Off
         # TODO: error between current and desired ee pose below threshold
         # wait for a while
         if sm_wait_time[tid] >= PickSmWaitTime.APPROACH_OBJECT:
@@ -152,7 +157,7 @@ def infer_state_machine(
     elif state == PickSmState.GRASP_OBJECT:
         des_ee_pose[tid] = object_pose[tid]
         gripper_state[tid] = GripperState.CLOSE
-        camera_state[tid] = CameraState.Off
+        take_foto[tid] = TakeFoto.Off
         # wait for a while
         if sm_wait_time[tid] >= PickSmWaitTime.GRASP_OBJECT:
             # move to next state and reset wait time
@@ -161,7 +166,7 @@ def infer_state_machine(
     elif state == PickSmState.LIFT_OBJECT:
         des_ee_pose[tid] = des_object_pose[tid]
         gripper_state[tid] = GripperState.CLOSE
-        camera_state[tid] = CameraState.Off
+        take_foto[tid] = TakeFoto.Off
         # TODO: error between current and desired ee pose below threshold
         # wait for a while
         if sm_wait_time[tid] >= PickSmWaitTime.LIFT_OBJECT:
@@ -215,7 +220,7 @@ class PickAndLiftSm:
         self.des_gripper_state = torch.full((self.num_envs,), 0.0, device=self.device)
 
         # camera state
-        self.camera_state = torch.full((self.num_envs,), 0.0, device=self.device)
+        self.take_foto = torch.full((self.num_envs,), 0.0, device=self.device)
 
         # approach above object offset
         self.offset = torch.zeros((self.num_envs, 7), device=self.device)
@@ -230,7 +235,7 @@ class PickAndLiftSm:
         self.default_pose_wp = wp.from_torch(self.default_pose.contiguous(), wp.transform)
         self.des_ee_pose_wp = wp.from_torch(self.des_ee_pose, wp.transform)
         self.des_gripper_state_wp = wp.from_torch(self.des_gripper_state, wp.float32)
-        self.camera_state_wp = wp.from_torch(self.camera_state, wp.float32)
+        self.take_foto_wp = wp.from_torch(self.take_foto, wp.float32)
         self.offset_wp = wp.from_torch(self.offset, wp.transform)
 
     def reset_idx(self, env_ids: Sequence[int] = None):
@@ -267,12 +272,12 @@ class PickAndLiftSm:
                 des_object_pose_wp,
                 self.des_ee_pose_wp,
                 self.des_gripper_state_wp,
-                self.camera_state_wp,
+                self.take_foto_wp,
                 self.offset_wp,
             ],
             device=self.device,
         )
-        print(f"print wp state:{self.sm_state_wp}")
+        # print(f"print wp state:{self.sm_state_wp}")
 
         # convert transformations back to (w, x, y, z)
         des_ee_pose = self.des_ee_pose[:, [0, 1, 2, 6, 3, 4, 5]]
@@ -375,6 +380,24 @@ def main():
     # create state machine
     pick_sm = PickAndLiftSm(env_cfg.sim.dt * env_cfg.decimation, env.unwrapped.num_envs, env.unwrapped.device)
 
+    # create replicator writers for each environment
+    output_dir_base = os.path.join(os.path.dirname(os.path.realpath(__file__)), "output")
+
+    # Create subfolders and writers for each environment
+    rep_writers = []
+    for env_index in range(env.unwrapped.num_envs):
+        # Create a subfolder for each environment
+        env_output_dir = os.path.join(output_dir_base, f"env_{env_index + 1}_camera")
+        os.makedirs(env_output_dir, exist_ok=True)
+
+        # Create a writer for this environment
+        rep_writer = rep.BasicWriter(
+            output_dir=env_output_dir,
+            frame_padding=0,
+        )
+        rep_writers.append(rep_writer)
+
+
     while simulation_app.is_running():
         # run everything in inference mode
         with torch.inference_mode():
@@ -411,9 +434,40 @@ def main():
                 torch.cat([desired_position, desired_orientation], dim=-1),
             )
 
-            print(f"print current actions:{actions}")
+            # print(f"print current actions:{actions}")
             print(f"print current camera data:{camera.data.output[0]}") #env 1
             print(f"print current camera data:{camera.data.output[1]}") #env 2
+
+            # Find indices of environments in the CAMERA state
+            camera_indices = torch.nonzero(pick_sm.take_foto == TakeFoto.ON, as_tuple=False)
+
+            if len(camera_indices) > 0:
+                print(f"Environments in CAMERA state: {camera_indices}")
+                for env_index in camera_indices.flatten():
+                    print(f"print env_index:{env_index}")
+                    rep_writer = rep_writers[env_index]
+                    # Access single camera data for the current environment
+                    single_cam_data = convert_dict_to_backend(camera.data.output[env_index], backend="numpy")
+
+                    # Extract additional camera information
+                    single_cam_info = camera.data.info[env_index]
+
+                    # Pack data into replicator format
+                    rep_output = {"annotators": {}}
+                    for key, data, info in zip(single_cam_data.keys(), single_cam_data.values(), single_cam_info.values()):
+                        if info is not None:
+                            rep_output["annotators"][key] = {"render_product": {"data": data, **info}}
+                        else:
+                            rep_output["annotators"][key] = {"render_product": {"data": data}}
+
+                    # Save images
+                    # Note: Provide on-time data for the replicator to save images
+                    rep_output["trigger_outputs"] = {"on_time": camera.frame[env_index]}
+                    rep_writer.write(rep_output)
+            else:
+                print("No environments are in the CAMERA state.")
+
+            print(f"print current camera state:{pick_sm.take_foto_wp}")
 
             # reset state machine
             if dones.any():
