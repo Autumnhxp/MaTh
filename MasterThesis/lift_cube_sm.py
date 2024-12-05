@@ -382,6 +382,7 @@ def main():
             dones = env.step(actions)[-2]
 
             # observations
+            camera = env.unwrapped.scene["camera"]
             # -- end-effector frame
             ee_frame_sensor = env.unwrapped.scene["ee_frame"]
             tcp_rest_position = ee_frame_sensor.data.target_pos_w[..., 0, :].clone() - env.unwrapped.scene.env_origins
@@ -411,6 +412,9 @@ def main():
             )
 
             print(f"print current actions:{actions}")
+            print(f"print current camera data:{camera.data.output[0]}") #env 1
+            print(f"print current camera data:{camera.data.output[1]}") #env 2
+
             # reset state machine
             if dones.any():
                 pick_sm.reset_idx(dones.nonzero(as_tuple=False).squeeze(-1))
