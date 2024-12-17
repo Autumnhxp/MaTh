@@ -48,7 +48,7 @@ class BridgeNode(Node):
         self.isaaclab_file_paths_subscription
 
         # ROS 2 发布者，用于将数据从 Python 3.8 客户端发布到 ROS 2
-        self.publisher_ = self.create_publisher(String, 'bridge_topic', 10)
+        self.publisher_ = self.create_publisher(String, 'grasp_results', 10)
 
         # 设置 ZeroMQ 上下文和套接字，重命名为 zmq_context 以避免冲突
         self.zmq_context = zmq.Context()
@@ -114,10 +114,10 @@ class BridgeNode(Node):
             try:
                 message = self.sub_socket.recv_string()
                 data = json.loads(message)
-                self.get_logger().info(f'Received data from Python 3.8: {data["data"]}')
+                self.get_logger().info(f'Received data from Python 3.8: {data}')
                 # 将接收到的数据发布到 ROS 2 话题
                 ros_msg = String()
-                ros_msg.data = data['data']
+                ros_msg.data = json.dumps(data)
                 self.publisher_.publish(ros_msg)
             except Exception as e:
                 self.get_logger().error(f'Error receiving data: {e}')

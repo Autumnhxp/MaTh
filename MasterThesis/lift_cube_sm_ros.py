@@ -79,9 +79,17 @@ except:
 class IsaacLab(Node):
     def __init__(self):
         super().__init__('IsaacLab')
+        # Publisher
         self.state_publisher_ = self.create_publisher(Int8MultiArray, 'sm_state_wp', 10)
         self.foto_publisher_ = self.create_publisher(Float32MultiArray, 'take_foto_wp', 10)
         self.file_paths_publicher_ = self.create_publisher(String, 'file_paths', 10)
+        # Subscriber
+        self.grasp_results_subscription = self.create_subscription(
+            String,
+            'grasp_results',
+            self.listener_callback,
+            10
+        )
         self.timer = self.create_timer(0.5, self.timer_callback)  # 每 0.5 秒發佈一次
         # 用於儲存從主程序更新的資料
         self.sm_state_wp_data = None
@@ -115,6 +123,17 @@ class IsaacLab(Node):
                 self.get_logger().info(f"Published file paths:\n{file_paths_json}")
             except Exception as e:
                 self.get_logger().error(f"Failed to publish file paths: {e}")
+    
+    def listener_callback(self, msg): 
+        try:
+            data = json.loads(msg.data)
+            self.get_logger().info(f'Received data from Python 3.8: {data}')
+        except json.JSONDecodeError as e:
+            self.get_logger().error(f"Invalid JSON format: {e}")
+            return
+        except Exception as e:
+            self.get_logger().error(f'Error in listener_callback: {e}')
+        
 
 
 

@@ -51,9 +51,11 @@ class VisionModel:
     
     def process(self, rgb_path, distance_path):
         # 模擬模型處理邏輯：返回随機的位移和旋轉矩陣
-
-        colors = np.array(Image.open(rgb_path).convert("RGB"), dtype=np.float32) / 255.0
-        depths = np.load(distance_path)
+        try:
+            colors = np.array(Image.open(rgb_path).convert("RGB"), dtype=np.float32) / 255.0
+            depths = np.load(distance_path)
+        except Exception as e:
+            print(f"Error loading depth file {distance_path}: {e}")
 
         # get point cloud
         xmap, ymap = np.arange(depths.shape[1]), np.arange(depths.shape[0])
@@ -72,6 +74,7 @@ class VisionModel:
 
         if len(gg) == 0:
             print('No Grasp detected after collision detection!')
+            return {"translation": None, "rotation": None}
 
         gg = gg.nms().sort_by_score()
         gg_pick = gg[0:20]
@@ -83,6 +86,19 @@ class VisionModel:
             "translation": translation,
             "rotation": rotation_matrix
         }
+    
+def convert_to_serializable(obj):
+    """
+    递归将字典中的 numpy.ndarray 转换为列表
+        """
+    if isinstance(obj, dict):
+        return {k: convert_to_serializable(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [convert_to_serializable(v) for v in obj]
+    elif isinstance(obj, np.ndarray):
+        return obj.tolist()  # 转换为标准 Python 列表
+    else:
+        return obj
 
 
 def main():
@@ -135,7 +151,7 @@ def main():
                     previous_file_paths_nonempty = bool(file_paths_data)  # 更新變量
 
                     # 如果 take_foto_wp 全為 1，且尚未生成握取姿勢，則開始處理環境資料
-                    if all(val == 1.0 for val in take_foto_wp_data) and not grasp_results:
+                    if file_paths_data!={} and grasp_results=={}:
                         env_count = len(take_foto_wp_data)
                         print(f"Detected {env_count} environments.")
 
@@ -156,7 +172,7 @@ def main():
                     # 將握取結果發布回標控節點
                     response = {
                         "cycle": simulation_cycle,
-                        "grasp_results": grasp_results
+                        "grasp_results": convert_to_serializable(grasp_results)
                     }
                     pub_socket.send_string(json.dumps(response))
                     print(f"Sent grasp results for cycle {simulation_cycle} back to bridge node.")
