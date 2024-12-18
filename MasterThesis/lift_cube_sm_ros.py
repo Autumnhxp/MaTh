@@ -95,7 +95,8 @@ class IsaacLab(Node):
         self.sm_state_wp_data = None
         self.take_foto_wp_data = None
         self.file_paths_data = None
-        
+        self.translation_env_nums = None
+        self.rotation_env_nums = None
 
     def update_data(self, sm_state, take_foto, file_paths):
         """更新需要發佈的資料"""
@@ -128,6 +129,36 @@ class IsaacLab(Node):
         try:
             data = json.loads(msg.data)
             self.get_logger().info(f'Received data from Python 3.8: {data}')
+
+            # 提取抓取结果并转换为 PyTorch 张量
+            grasp_results = data.get('grasp_results', {})
+            num_envs = len(grasp_results)  # 根据抓取结果确定环境数量
+
+            # 创建 translation 和 rotation 的张量列表
+            translations = []
+            rotations = []
+
+            for env_id in range(num_envs):
+                env_id_str = str(env_id)
+                env_result = grasp_results.get(env_id_str, {})
+                translation = env_result.get('translation', [0.0, 0.0, 0.0])
+                rotation = env_result.get('rotation', [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]])
+            
+                translations.append(torch.tensor(translation, dtype=torch.float32))
+                rotations.append(torch.tensor(rotation, dtype=torch.float32))
+
+            # 将 translation 和 rotation 转换为张量矩阵
+            translation_env_nums = torch.stack(translations)  # (num_envs, 3)
+            rotation_env_nums = torch.stack(rotations)  # (num_envs, 3, 3)
+
+            # 打印结果（调试用）
+            self.get_logger().info(f"translation_env_nums: {translation_env_nums}")
+            self.get_logger().info(f"rotation_env_nums: {rotation_env_nums}")
+
+            # 将结果保存为节点属性，供主程序调用
+            self.translation_env_nums = translation_env_nums
+            self.rotation_env_nums = rotation_env_nums
+        
         except json.JSONDecodeError as e:
             self.get_logger().error(f"Invalid JSON format: {e}")
             return
@@ -533,6 +564,15 @@ def main():
             # print(f"print current desired pos:{torch.cat([desired_position, desired_orientation], dim=-1)}")
 
             ros_msg_received = torch.full((env.unwrapped.num_envs,), 0.0, device=env.unwrapped.device)
+
+            # 确保抓取结果已经被接收
+            if hasattr(isaaclab_node, 'translation_env_nums') and hasattr(isaaclab_node, 'rotation_env_nums'):
+                translation_env_nums = isaaclab_node.translation_env_nums  # (num_envs, 3)
+                rotation_env_nums = isaaclab_node.rotation_env_nums  # (num_envs, 3, 3)
+
+                # 使用 translation 和 rotation 张量
+                print(f"Translation Matrices:\n{translation_env_nums}")
+                print(f"Rotation Matrices:\n{rotation_env_nums}")
 
             # advance state machine
             # actions = pick_sm.compute(
