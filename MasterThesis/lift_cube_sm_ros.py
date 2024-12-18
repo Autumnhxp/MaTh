@@ -95,6 +95,7 @@ class IsaacLab(Node):
         self.sm_state_wp_data = None
         self.take_foto_wp_data = None
         self.file_paths_data = None
+        self.grasp_results_data = None
         self.translation_env_nums = None
         self.rotation_env_nums = None
 
@@ -109,26 +110,28 @@ class IsaacLab(Node):
             msg_sm_state = Int8MultiArray()
             msg_sm_state.data = self.sm_state_wp_data.numpy().tolist()  # 轉換為列表發佈
             self.state_publisher_.publish(msg_sm_state)
-            self.get_logger().info(f'Published sm_state_wp: {msg_sm_state.data}')
+            # self.get_logger().info(f'Published sm_state_wp: {msg_sm_state.data}')
         if self.take_foto_wp_data is not None:
             msg_take_foto = Float32MultiArray()
             msg_take_foto.data = self.take_foto_wp_data.numpy().tolist()  # 轉換為列表發佈
             self.foto_publisher_.publish(msg_take_foto)
-            self.get_logger().info(f'Published take_foto_wp: {msg_take_foto.data}')
+            # self.get_logger().info(f'Published take_foto_wp: {msg_take_foto.data}')
         if self.file_paths_data is not None:
             try:
                 file_paths_json = json.dumps(self.file_paths_data)
                 msg_file_paths = String()
                 msg_file_paths.data = file_paths_json
                 self.file_paths_publicher_.publish(msg_file_paths)
-                self.get_logger().info(f"Published file paths:\n{file_paths_json}")
+                # self.get_logger().info(f"Published file paths:\n{file_paths_json}")
             except Exception as e:
                 self.get_logger().error(f"Failed to publish file paths: {e}")
     
     def listener_callback(self, msg): 
         try:
             data = json.loads(msg.data)
-            self.get_logger().info(f'Received data from Python 3.8: {data}')
+            self.grasp_results_data = data.get('grasp_results', {})
+            # self.get_logger().info(f'Received data from Python 3.8: {data}')
+            # self.get_logger().info(f'Data of grasp_results : {self.grasp_results_data}')
 
             # 提取抓取结果并转换为 PyTorch 张量
             grasp_results = data.get('grasp_results', {})
@@ -141,23 +144,30 @@ class IsaacLab(Node):
             for env_id in range(num_envs):
                 env_id_str = str(env_id)
                 env_result = grasp_results.get(env_id_str, {})
-                translation = env_result.get('translation', [0.0, 0.0, 0.0])
-                rotation = env_result.get('rotation', [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]])
+                translation = env_result.get('translation')
+                rotation = env_result.get('rotation')
             
                 translations.append(torch.tensor(translation, dtype=torch.float32))
                 rotations.append(torch.tensor(rotation, dtype=torch.float32))
 
+            # self.get_logger().info(f"translation: {translations}")
+            # self.get_logger().info(f"rotation: {rotations}")
+
             # 将 translation 和 rotation 转换为张量矩阵
-            translation_env_nums = torch.stack(translations)  # (num_envs, 3)
-            rotation_env_nums = torch.stack(rotations)  # (num_envs, 3, 3)
+            if translations != [] and rotations != []: 
+                translation_env_nums = torch.stack(translations)  # (num_envs, 3)
+                rotation_env_nums = torch.stack(rotations)  # (num_envs, 3, 3)
 
-            # 打印结果（调试用）
-            self.get_logger().info(f"translation_env_nums: {translation_env_nums}")
-            self.get_logger().info(f"rotation_env_nums: {rotation_env_nums}")
+                # 打印结果（调试用）
+                # self.get_logger().info(f"translation_env_nums: {translation_env_nums}")
+                # self.get_logger().info(f"rotation_env_nums: {rotation_env_nums}")
 
-            # 将结果保存为节点属性，供主程序调用
-            self.translation_env_nums = translation_env_nums
-            self.rotation_env_nums = rotation_env_nums
+                # 将结果保存为节点属性，供主程序调用
+                self.translation_env_nums = translation_env_nums
+                self.rotation_env_nums = rotation_env_nums
+            else:
+                self.translation_env_nums = None
+                self.rotation_env_nums = None
         
         except json.JSONDecodeError as e:
             self.get_logger().error(f"Invalid JSON format: {e}")
@@ -364,6 +374,21 @@ class PickAndLiftSm:
         self.take_foto_wp = wp.from_torch(self.take_foto, wp.float32)
         self.offset_wp = wp.from_torch(self.offset, wp.transform)
 
+        # simulation environment data
+        self.camera_translation_world = torch.tensor([0.25, 0.0, 0.8-0.015], device=self.device).repeat(self.num_envs,1)
+        self.camera_rotation_world = torch.tensor([
+            [1.0000e+00,         0.0,         0.0],
+            [       0.0, -1.0000e+00,         0.0],
+            [       0.0,         0.0, -1.0000e+00]
+        ], device=self.device).repeat(self.num_envs, 1, 1)
+        self.model_coordinate_rotation_to_issaclab = torch.tensor([
+            [ 0.0,  0.0, 1.0],
+            [ 0.0, -1.0, 0.0],
+            [ 1.0,  0.0, 0.0]
+        ], device=self.device).repeat(self.num_envs, 1, 1)
+        self.robot_root_translation_world = torch.tensor([0.0, 0.0, 0.0], device=self.device).repeat(self.num_envs, 1)
+        self.robot_root_orientation_world = torch.tensor([1.0, 0.0, 0.0, 0.0], device=self.device).repeat(self.num_envs, 1)
+
     def reset_idx(self, env_ids: Sequence[int] = None):
         """Reset the state machine."""
         if env_ids is None:
@@ -413,9 +438,9 @@ class PickAndLiftSm:
         return torch.cat([des_ee_pose, self.des_gripper_state.unsqueeze(-1)], dim=-1)
 
     @typechecked
-    def get_grasping_pos(self) -> TensorType["num_envs", 7]:
+    def get_grasping_pos(self, translations, rotations) -> TensorType["num_envs", 7]:
         """
-        
+        Compute the grasping position for simulation environment
 
         Args:
             
@@ -425,34 +450,22 @@ class PickAndLiftSm:
         """
         # Define grasping pose for the arm
         # Camera pose in world frame
-        camera_translation_world = torch.tensor([0.25002, -8.7417e-08, 0.7850], device=self.device)
-        camera_rotation_world = torch.tensor([
-            [1.0000e+00,  4.2478e-06,  7.1212e-05],
-            [4.2478e-06, -1.0000e+00, -3.5747e-07],
-            [7.1212e-05,  3.5778e-07, -1.0000e+00]
-        ], device=self.device)
+        camera_translation_world = self.camera_translation_world
+        camera_rotation_world = self.camera_rotation_world
 
         # Grasping pose in camera frame
-        grasp_translation_camera = torch.tensor([0.05017354, -0.00239286, 0.70051754], device=self.device)
+        grasp_translation_camera = translations
         # hand_traslation_from_EE = torch.tensor([0.0, 0.0, 0.1034], device=self.device)
-        hand_traslation_from_EE = torch.tensor([0.0, 0.0, 0.0], device=self.device)
+        hand_traslation_from_EE = torch.tensor([0.0, 0.0, 0.1034-0.009], device=self.device).repeat(self.num_envs,1)
         EE_translation_camera = grasp_translation_camera - hand_traslation_from_EE
-        grasp_rotation_camera = torch.tensor([
-            [-0.08158159,  0.0,  0.99666667],
-            [ 0.0,        -1.0,  0.0       ],
-            [ 0.99666667,  0.0,  0.08158159]
-        ], device=self.device)
-        AnyGrasp_grasp_coordinate_rotation_isaaclab = torch.tensor([
-            [ 0.0,  0.0, 1.0],
-            [ 0.0, -1.0, 0.0],
-            [ 1.0,  0.0, 0.0]
-        ], device=self.device)
+        grasp_rotation_camera = rotations
+        AnyGrasp_grasp_coordinate_rotation_isaaclab = self.model_coordinate_rotation_to_issaclab
         grasp_rotation_camera = torch.matmul(AnyGrasp_grasp_coordinate_rotation_isaaclab, grasp_rotation_camera)
 
         # Transform grasping position to world frame
         grasp_translation_world = (
             camera_translation_world +
-            torch.matmul(camera_rotation_world, EE_translation_camera)
+            torch.matmul(camera_rotation_world, EE_translation_camera.unsqueeze(-1)).squeeze(-1)
         )
 
         # Transform grasping orientation to world frame
@@ -466,21 +479,22 @@ class PickAndLiftSm:
         # print(grasp_rotation_world.cpu().numpy())
 
         # Robot root pose in the world frame
-        robot_root_translation_world = torch.tensor([3.7253e-09, 2.3283e-10, 0.0], device=self.device)
-        robot_root_orientation_world = torch.tensor([1.0, -1.4891e-10, -8.7813e-10, -8.4725e-11], device=self.device)  # Quaternion (w, x, y, z)
+        robot_root_translation_world = self.robot_root_translation_world
+        robot_root_orientation_world = self.robot_root_orientation_world  # Quaternion (w, x, y, z)
         robot_root_rotation_world = matrix_from_quat(robot_root_orientation_world)
 
         # Compute inverse transformation (world → robot root)
-        robot_root_rotation_inverse = robot_root_rotation_world.T  # Transpose of rotation matrix
-        robot_root_translation_inverse = -torch.matmul(robot_root_rotation_inverse, robot_root_translation_world)
+        robot_root_rotation_inverse = robot_root_rotation_world.transpose(-2, -1)  # Transpose of rotation matrix
+        robot_root_translation_inverse = -torch.matmul(robot_root_rotation_inverse, robot_root_translation_world.unsqueeze(-1)).squeeze(-1)
 
         # Transform grasping pose to robot root frame
         grasp_translation_robot_root = (
-            torch.matmul(robot_root_rotation_inverse, grasp_translation_world) +
+            torch.matmul(robot_root_rotation_inverse, grasp_translation_world.unsqueeze(-1)).squeeze(-1) +
             robot_root_translation_inverse
         )
         grasp_rotation_robot_root = torch.matmul(robot_root_rotation_inverse, grasp_rotation_world)
-        grasp_orientation_robot_root = quat_from_matrix(grasp_rotation_robot_root)
+        # grasp_orientation_robot_root = quat_from_matrix(grasp_rotation_robot_root)
+        grasp_orientation_robot_root = torch.tensor([0.0, 1.0, 0.0, 0.0], device=self.device).repeat(self.num_envs,1)
         # grasp_orientation_robot_root = torch.tensor([0.0, 1.0, 0.0, 0.0], device='cuda:0')
         # Output results
         # print("Grasping position in robot root coordinates (translation):")
@@ -493,7 +507,7 @@ class PickAndLiftSm:
         # print(grasp_orientation_robot_root)
 
         # Define grasp translation and orientation as a single goal
-        return torch.cat((grasp_translation_robot_root, grasp_orientation_robot_root), dim=0).repeat(self.num_envs, 1)  # Concatenate translation and quaternion
+        return torch.cat((grasp_translation_robot_root, grasp_orientation_robot_root), dim=1)  # Concatenate translation and quaternion
 
 
 def main():
@@ -541,6 +555,14 @@ def main():
         rep_writers.append(rep_writer)
         all_writer_saved_paths = {}
 
+        # Defualt Grasp Result
+        translation_env_nums = torch.tensor([0.0, 0.0, 0.0], device=env.unwrapped.device).repeat(env.unwrapped.num_envs,1)
+        rotation_env_nums = torch.tensor([
+            [1.0000e+00,         0.0,        0.0],
+            [       0.0,  1.0000e+00,        0.0],
+            [       0.0,         0.0, 1.0000e+00]
+        ], device=env.unwrapped.device).repeat(env.unwrapped.num_envs, 1, 1)
+
 
     while simulation_app.is_running():
         # run everything in inference mode
@@ -563,16 +585,22 @@ def main():
             desired_position = env.unwrapped.command_manager.get_command("object_pose")[..., :3]
             # print(f"print current desired pos:{torch.cat([desired_position, desired_orientation], dim=-1)}")
 
-            ros_msg_received = torch.full((env.unwrapped.num_envs,), 0.0, device=env.unwrapped.device)
+            print(f"print ros node translation_env_nums data:{isaaclab_node.translation_env_nums}")
+            print(f"print ros node rotation_env_nums data:{isaaclab_node.rotation_env_nums}")
+            
+            if isaaclab_node.translation_env_nums == None or isaaclab_node.rotation_env_nums == None:
+                ros_msg_received = torch.full((env.unwrapped.num_envs,), 0.0, device=env.unwrapped.device)
+            else:
+                ros_msg_received = torch.full((env.unwrapped.num_envs,), 1.0, device=env.unwrapped.device)
+                translation_env_nums = isaaclab_node.translation_env_nums.to(env.unwrapped.device)  # (num_envs, 3)
+                rotation_env_nums = isaaclab_node.rotation_env_nums.to(env.unwrapped.device)  # (num_envs, 3, 3)
 
-            # 确保抓取结果已经被接收
-            if hasattr(isaaclab_node, 'translation_env_nums') and hasattr(isaaclab_node, 'rotation_env_nums'):
-                translation_env_nums = isaaclab_node.translation_env_nums  # (num_envs, 3)
-                rotation_env_nums = isaaclab_node.rotation_env_nums  # (num_envs, 3, 3)
+            print(f"print translation_env_nums data:{translation_env_nums}")
+            print(f"print rotation_env_nums data:{rotation_env_nums}")
 
                 # 使用 translation 和 rotation 张量
-                print(f"Translation Matrices:\n{translation_env_nums}")
-                print(f"Rotation Matrices:\n{rotation_env_nums}")
+                # print(f"Translation Matrices:\n{translation_env_nums}")
+                # print(f"Rotation Matrices:\n{rotation_env_nums}")
 
             # advance state machine
             # actions = pick_sm.compute(
@@ -582,7 +610,7 @@ def main():
             # )
             # advance state machine anygrasp
             # grasp_goal = torch.tensor([0.25, 0.0, 0.8, 0.0, 1.0, 0.0, 0.0], device=self.device).repeat(self.num_envs, 1)
-            grasp_goal = pick_sm.get_grasping_pos()
+            grasp_goal = pick_sm.get_grasping_pos(translation_env_nums,rotation_env_nums)
             actions = pick_sm.compute(
                 torch.cat([tcp_rest_position, tcp_rest_orientation], dim=-1),
                 grasp_goal,
@@ -637,6 +665,7 @@ def main():
             #             print(f"  {annotator}: {path}")
             # print(f"Print All File Paths:", all_saved_paths)
             
+            print(f"print current sm state:{pick_sm.sm_state_wp}")
             isaaclab_node.update_data(pick_sm.sm_state_wp, pick_sm.take_foto_wp, all_writer_saved_paths)
             
             
@@ -649,6 +678,14 @@ def main():
             if dones.any():
                 pick_sm.reset_idx(dones.nonzero(as_tuple=False).squeeze(-1))
                 all_writer_saved_paths = {}
+                # Defualt Grasp Result
+                translation_env_nums = torch.tensor([0.0, 0.0, 0.0], device=env.unwrapped.device).repeat(env.unwrapped.num_envs,1)
+                rotation_env_nums = torch.tensor([
+                    [1.0000e+00,         0.0,        0.0],
+                    [       0.0,  1.0000e+00,        0.0],
+                    [       0.0,         0.0, 1.0000e+00]
+                ], device=env.unwrapped.device).repeat(env.unwrapped.num_envs, 1, 1)
+
 
     # close the environment
     env.close()
