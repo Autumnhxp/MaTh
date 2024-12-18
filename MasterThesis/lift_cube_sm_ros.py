@@ -41,6 +41,7 @@ simulation_app = app_launcher.app
 import gymnasium as gym
 import os
 import torch
+from typing import Tuple
 from torchtyping import TensorType
 from typeguard import typechecked
 
@@ -229,7 +230,7 @@ def infer_state_machine(
     sm_wait_time: wp.array(dtype=float),
     ee_pose: wp.array(dtype=wp.transform),
     camera_pose: wp.array(dtype=wp.transform),
-    default_pose:wp.array(dtype=wp.transform),
+    grasp_ready_pose:wp.array(dtype=wp.transform),
     object_pose: wp.array(dtype=wp.transform),
     des_object_pose: wp.array(dtype=wp.transform),
     des_ee_pose: wp.array(dtype=wp.transform),
@@ -271,7 +272,7 @@ def infer_state_machine(
             sm_state[tid] = PickSmState.APPROACH_ABOVE_OBJECT
             sm_wait_time[tid] = 0.0
     elif state == PickSmState.APPROACH_ABOVE_OBJECT:
-        des_ee_pose[tid] = default_pose[tid]
+        des_ee_pose[tid] = grasp_ready_pose[tid]
         gripper_state[tid] = GripperState.OPEN
         take_foto[tid] = TakeFoto.Off
         # TODO: error between current and desired ee pose below threshold
@@ -396,16 +397,18 @@ class PickAndLiftSm:
         self.sm_state[env_ids] = 0
         self.sm_wait_time[env_ids] = 0.0
 
-    def compute(self, ee_pose: torch.Tensor, object_pose: torch.Tensor, des_object_pose: torch.Tensor, ros_msg_received: torch.Tensor):
+    def compute(self, ee_pose: torch.Tensor, object_pose: torch.Tensor, grasp_ready_pose: torch.Tensor, des_object_pose: torch.Tensor, ros_msg_received: torch.Tensor):
         """Compute the desired state of the robot's end-effector and the gripper."""
         # convert all transformations from (w, x, y, z) to (x, y, z, w)
         ee_pose = ee_pose[:, [0, 1, 2, 4, 5, 6, 3]]
         object_pose = object_pose[:, [0, 1, 2, 4, 5, 6, 3]]
+        grasp_ready_pose = grasp_ready_pose[:, [0, 1, 2, 4, 5, 6, 3]]
         des_object_pose = des_object_pose[:, [0, 1, 2, 4, 5, 6, 3]]
 
         # convert to warp
         ee_pose_wp = wp.from_torch(ee_pose.contiguous(), wp.transform)
         object_pose_wp = wp.from_torch(object_pose.contiguous(), wp.transform)
+        grasp_ready_pose = wp.from_torch(grasp_ready_pose.contiguous(), wp.transform)
         des_object_pose_wp = wp.from_torch(des_object_pose.contiguous(), wp.transform)
         ros_msg_received_wp = wp.from_torch(ros_msg_received, wp.float32)
 
@@ -419,7 +422,7 @@ class PickAndLiftSm:
                 self.sm_wait_time_wp,
                 ee_pose_wp,
                 self.camera_pose_wp,
-                self.default_pose_wp,
+                grasp_ready_pose,
                 object_pose_wp,
                 des_object_pose_wp,
                 self.des_ee_pose_wp,
@@ -438,7 +441,7 @@ class PickAndLiftSm:
         return torch.cat([des_ee_pose, self.des_gripper_state.unsqueeze(-1)], dim=-1)
 
     @typechecked
-    def get_grasping_pos(self, translations, rotations) -> TensorType["num_envs", 7]:
+    def get_grasping_pos(self, translations, rotations) -> Tuple[TensorType["num_envs", 7], TensorType["num_envs", 7]]:
         """
         Compute the grasping position for simulation environment
 
@@ -493,9 +496,14 @@ class PickAndLiftSm:
             robot_root_translation_inverse
         )
         grasp_rotation_robot_root = torch.matmul(robot_root_rotation_inverse, grasp_rotation_world)
-        # grasp_orientation_robot_root = quat_from_matrix(grasp_rotation_robot_root)
-        grasp_orientation_robot_root = torch.tensor([0.0, 1.0, 0.0, 0.0], device=self.device).repeat(self.num_envs,1)
-        # grasp_orientation_robot_root = torch.tensor([0.0, 1.0, 0.0, 0.0], device='cuda:0')
+        grasp_orientation_robot_root = quat_from_matrix(grasp_rotation_robot_root)
+        # grasp_orientation_robot_root = torch.tensor([0.0, 1.0, 0.0, 0.0], device=self.device).repeat(self.num_envs,1)
+
+        # 从 grasp_orientation_robot_root 计算方向向量
+        direction_vector = torch.matmul(grasp_rotation_robot_root, torch.tensor([0.0, 0.0, 1.0], device=self.device).unsqueeze(-1)).squeeze(-1)
+
+        # 计算起点（source_point），即距离 grasp_translation_robot_root 为 0.1 且方向相反的点
+        source_point = grasp_translation_robot_root - 0.1 * direction_vector
         # Output results
         # print("Grasping position in robot root coordinates (translation):")
         # print(grasp_translation_robot_root)
@@ -507,7 +515,9 @@ class PickAndLiftSm:
         # print(grasp_orientation_robot_root)
 
         # Define grasp translation and orientation as a single goal
-        return torch.cat((grasp_translation_robot_root, grasp_orientation_robot_root), dim=1)  # Concatenate translation and quaternion
+        grasp_goal = torch.cat((grasp_translation_robot_root, grasp_orientation_robot_root), dim=1) # Concatenate translation and quaternion
+        grasp_source = torch.cat((source_point, grasp_orientation_robot_root), dim=1) # Concatenate translation and quaternion
+        return grasp_goal, grasp_source
 
 
 def main():
@@ -610,10 +620,11 @@ def main():
             # )
             # advance state machine anygrasp
             # grasp_goal = torch.tensor([0.25, 0.0, 0.8, 0.0, 1.0, 0.0, 0.0], device=self.device).repeat(self.num_envs, 1)
-            grasp_goal = pick_sm.get_grasping_pos(translation_env_nums,rotation_env_nums)
+            grasp_goal, grasp_default_source = pick_sm.get_grasping_pos(translation_env_nums,rotation_env_nums)
             actions = pick_sm.compute(
                 torch.cat([tcp_rest_position, tcp_rest_orientation], dim=-1),
                 grasp_goal,
+                grasp_default_source,
                 torch.cat([desired_position, desired_orientation], dim=-1),
                 ros_msg_received=ros_msg_received,
             )
