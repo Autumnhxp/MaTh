@@ -43,7 +43,7 @@ class VisionModel:
         self.scale = 1 # for omniverse camera, since the distance unit of omniverse is also meter
     
         # set workspace to filter output grasps
-        self.xmin, self.xmax = -0.5, 0.5
+        self.xmin, self.xmax = -0.1, 0.5
         self.ymin, self.ymax = -0.5, 0.5
         self.zmin, self.zmax = 0.0, 1.0
 

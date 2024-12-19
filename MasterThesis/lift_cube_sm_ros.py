@@ -206,18 +206,20 @@ class PickSmState:
     REST = wp.constant(0)
     CAMERA = wp.constant(1)
     WAIT_FOR_ROS_MESSAGE = wp.constant(2)
-    APPROACH_ABOVE_OBJECT = wp.constant(3)
-    APPROACH_OBJECT = wp.constant(4)
-    GRASP_OBJECT = wp.constant(5)
-    LIFT_OBJECT = wp.constant(6)
+    DEFAULT_POSE = wp.constant(3)
+    APPROACH_ABOVE_OBJECT = wp.constant(4)
+    APPROACH_OBJECT = wp.constant(5)
+    GRASP_OBJECT = wp.constant(6)
+    LIFT_OBJECT = wp.constant(7)
 
 
 class PickSmWaitTime:
     """Additional wait times (in s) for states for before switching."""
 
     REST = wp.constant(0.4)
-    CAMERA = wp.constant(2.0)
-    APPROACH_ABOVE_OBJECT = wp.constant(2.0)
+    CAMERA = wp.constant(1.6)
+    DEFAULT_POSE = wp.constant(2.0)
+    APPROACH_ABOVE_OBJECT = wp.constant(1.2)
     APPROACH_OBJECT = wp.constant(2.0)
     GRASP_OBJECT = wp.constant(0.8)
     LIFT_OBJECT = wp.constant(1.2)
@@ -230,6 +232,7 @@ def infer_state_machine(
     sm_wait_time: wp.array(dtype=float),
     ee_pose: wp.array(dtype=wp.transform),
     camera_pose: wp.array(dtype=wp.transform),
+    default_pose: wp.array(dtype=wp.transform),
     grasp_ready_pose:wp.array(dtype=wp.transform),
     object_pose: wp.array(dtype=wp.transform),
     des_object_pose: wp.array(dtype=wp.transform),
@@ -269,6 +272,16 @@ def infer_state_machine(
         take_foto[tid] = TakeFoto.Off
         # wait till ros msg is received
         if ros_msg_received[tid] == RosMsgReceived.TRUE:
+            sm_state[tid] = PickSmState.DEFAULT_POSE
+            sm_wait_time[tid] = 0.0
+    elif state == PickSmState.DEFAULT_POSE:
+        des_ee_pose[tid] = default_pose[tid]
+        gripper_state[tid] = GripperState.OPEN
+        take_foto[tid] = TakeFoto.Off
+        # TODO: error between current and desired ee pose below threshold
+        # wait for a while
+        if sm_wait_time[tid] >= PickSmWaitTime.DEFAULT_POSE:
+            # move to next state and reset wait time
             sm_state[tid] = PickSmState.APPROACH_ABOVE_OBJECT
             sm_wait_time[tid] = 0.0
     elif state == PickSmState.APPROACH_ABOVE_OBJECT:
@@ -422,6 +435,7 @@ class PickAndLiftSm:
                 self.sm_wait_time_wp,
                 ee_pose_wp,
                 self.camera_pose_wp,
+                self.default_pose_wp,
                 grasp_ready_pose,
                 object_pose_wp,
                 des_object_pose_wp,
@@ -495,15 +509,17 @@ class PickAndLiftSm:
             torch.matmul(robot_root_rotation_inverse, grasp_translation_world.unsqueeze(-1)).squeeze(-1) +
             robot_root_translation_inverse
         )
-        grasp_rotation_robot_root = torch.matmul(robot_root_rotation_inverse, grasp_rotation_world)
-        grasp_orientation_robot_root = quat_from_matrix(grasp_rotation_robot_root)
-        # grasp_orientation_robot_root = torch.tensor([0.0, 1.0, 0.0, 0.0], device=self.device).repeat(self.num_envs,1)
+        # grasp_rotation_robot_root = torch.matmul(robot_root_rotation_inverse, grasp_rotation_world)
+        # grasp_orientation_robot_root = quat_from_matrix(grasp_rotation_robot_root)
+        grasp_orientation_robot_root = torch.tensor([0.0, 1.0, 0.0, 0.0], device=self.device).repeat(self.num_envs,1)
+        grasp_rotation_robot_root = matrix_from_quat(grasp_orientation_robot_root)
+
 
         # 从 grasp_orientation_robot_root 计算方向向量
         direction_vector = torch.matmul(grasp_rotation_robot_root, torch.tensor([0.0, 0.0, 1.0], device=self.device).unsqueeze(-1)).squeeze(-1)
 
         # 计算起点（source_point），即距离 grasp_translation_robot_root 为 0.1 且方向相反的点
-        source_point = grasp_translation_robot_root - 0.1 * direction_vector
+        source_point = grasp_translation_robot_root - 0.05 * direction_vector
         # Output results
         # print("Grasping position in robot root coordinates (translation):")
         # print(grasp_translation_robot_root)
@@ -528,13 +544,13 @@ def main():
 
     # parse configuration
     env_cfg = parse_env_cfg(
-        "My-Custom-Env-v0",
+        "My-Custom-Env-v1",
         device=args_cli.device,
         num_envs=args_cli.num_envs,
         use_fabric=not args_cli.disable_fabric,
     )
     # create environment
-    env = gym.make("My-Custom-Env-v0", cfg=env_cfg)
+    env = gym.make("My-Custom-Env-v1", cfg=env_cfg)
     # reset environment at start
     env.reset()
 
