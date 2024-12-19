@@ -1,0 +1,9 @@
+Nailing_Aimingarm = 162g
+Nailing_bar = 114g
+Nailing_gear = 84g
+Nailing_insertionhandle = 323g
+Nailing_nail = 172g
+Nailing_roller = 23g
+Nailing_screw = 16g
+Nailing_spacer = 24g
+Nailing_stick = 205g

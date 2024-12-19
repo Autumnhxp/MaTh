@@ -358,16 +358,17 @@ class PickAndLiftSm:
         return torch.cat((grasp_translation_robot_root, grasp_orientation_robot_root), dim=0)  # Concatenate translation and quaternion
 
 
+
 def main():
     # parse configuration
     env_cfg = parse_env_cfg(
-        "My-Custom-Env-v0",
+        "My-Custom-Env-v1",
         device=args_cli.device,
         num_envs=args_cli.num_envs,
         use_fabric=not args_cli.disable_fabric,
     )
     # create environment
-    env = gym.make("My-Custom-Env-v0", cfg=env_cfg)
+    env = gym.make("My-Custom-Env-v1", cfg=env_cfg)
     # reset environment at start
     env.reset()
 
