@@ -177,7 +177,70 @@ class IsaacLab(Node):
             self.get_logger().error(f'Error in listener_callback: {e}')
         
 
+def adjust_matrices_torch(R2) -> torch.Tensor:
+    """
+    调整 R2 张量，使其满足以下条件：
+    1. 每个调整后的矩阵的 x 轴与 R1 的 x 轴平行。
+    2. 每个矩阵的 z 轴投影到 R1 的 z-y 平面的比例保持不变。
+    
+    参数:
+        R2 (torch.Tensor): 一个形状为 (n, 3, 3) 的张量，其中包含 n 个旋转矩阵。
+    
+    返回:
+        torch.Tensor: 调整后的形状为 (n, 3, 3) 的旋转矩阵张量。
+    """
+    # 定义 R1 的基准旋转矩阵
+    R1 = torch.tensor([[0.0, 0.0, 1.0],
+                       [0.0, -1.0, 0.0],
+                       [1.0, 0.0, 0.0]], dtype=R2.dtype, device=R2.device)
+    
+    # 提取 R1 的轴向量
+    x_axis_R1 = R1[:, 0]
+    y_axis_R1 = R1[:, 1]
+    z_axis_R1 = R1[:, 2]
+    
+    # 确保 R2 的形状为 (n, 3, 3)
+    assert R2.ndim == 3 and R2.shape[1:] == (3, 3), "R2 的形状必须为 (n, 3, 3)"
+    
+    # 调整 R2 的 x 轴为与 R1 的 x 轴平行
+    x_axis_R2_new = x_axis_R1.repeat(R2.shape[0], 1)  # (n, 3)
+    
+    # 获取 R2 的原始 z 轴向量
+    z_axis_R2 = R2[:, :, 2]  # (n, 3)
+    
+    # 投影 R2 的 z 轴到 R1 的 z-y 平面
+    z_proj = torch.einsum('ij,j->i', z_axis_R2, z_axis_R1)[:, None] * z_axis_R1  # (n, 3)
+    y_proj = torch.einsum('ij,j->i', z_axis_R2, y_axis_R1)[:, None] * y_axis_R1  # (n, 3)
+    
+    # 重新计算调整后的 z 轴，保持比例不变
+    z_axis_R2_new = z_proj + y_proj
+    z_axis_R2_new = z_axis_R2_new / z_axis_R2_new.norm(dim=1, keepdim=True)  # 归一化 (n, 3)
+    
+    # 通过右手法则计算新的 y 轴方向
+    y_axis_R2_new = torch.cross(z_axis_R2_new, x_axis_R2_new, dim=1)  # (n, 3)
+    y_axis_R2_new = y_axis_R2_new / y_axis_R2_new.norm(dim=1, keepdim=True)  # 归一化
+    
+    # 组合新的旋转矩阵
+    R2_new = torch.stack((x_axis_R2_new, y_axis_R2_new, z_axis_R2_new), dim=-1)  # (n, 3, 3)
+    
+    return R2_new
 
+def change_ee_coordinate_to_isaac_lab(tensor)-> torch.Tensor:
+    # 固定变换矩阵
+    transform_matrix = torch.tensor([[0, -1], [1, 0]], dtype=torch.float32, device=tensor.device)
+
+    # 提取 [[a, b], [c, d]] 的部分
+    sub_matrices = tensor[:, :2, 1:3]  # (n x 2 x 2)
+
+    # 批量矩阵乘法
+    transformed_sub_matrices = torch.matmul(transform_matrix, sub_matrices)  # (n x 2 x 2)
+
+    # 构造输出张量
+    output_tensor = torch.zeros_like(tensor)
+    output_tensor[:, :2, :2] = transformed_sub_matrices  # 填充左上角
+    output_tensor[:, 2, 2] = 1.0  # 填充右下角
+
+    return output_tensor
 
 # ROS 2 初始化函數
 def ros2_node_thread(publisher_node):
@@ -397,11 +460,16 @@ class PickAndLiftSm:
         ], device=self.device).repeat(self.num_envs, 1, 1)
         self.model_coordinate_rotation_to_issaclab = torch.tensor([
             [ 0.0,  0.0, 1.0],
-            [ 0.0, -1.0, 0.0],
-            [ 1.0,  0.0, 0.0]
+            [ 0.0,  1.0, 0.0],
+            [-1.0,  0.0, 0.0]
         ], device=self.device).repeat(self.num_envs, 1, 1)
         self.robot_root_translation_world = torch.tensor([0.0, 0.0, 0.0], device=self.device).repeat(self.num_envs, 1)
         self.robot_root_orientation_world = torch.tensor([1.0, 0.0, 0.0, 0.0], device=self.device).repeat(self.num_envs, 1)
+        self.ee_T_anygrasp_isaaclab = torch.tensor([
+            [ 0.0,  0.0, -1.0],
+            [ 0.0,  1.0,  0.0],
+            [ 1.0,  0.0,  0.0]
+        ], device=self.device).repeat(self.num_envs, 1, 1)
 
     def reset_idx(self, env_ids: Sequence[int] = None):
         """Reset the state machine."""
@@ -476,8 +544,26 @@ class PickAndLiftSm:
         hand_traslation_from_EE = torch.tensor([0.0, 0.0, 0.1034-0.009], device=self.device).repeat(self.num_envs,1)
         EE_translation_camera = grasp_translation_camera - hand_traslation_from_EE
         grasp_rotation_camera = rotations
+        grasp_rotation_camera = adjust_matrices_torch(rotations)
+        #grasp_rotation_camera = torch.tensor([
+        #    [ 0.0,  -1.0, 0.0],
+        #    [ 0.0,  0.0, -1.0],
+        #    [ 1.0,  0.0, 0.0]
+        #], device=self.device).repeat(self.num_envs, 1, 1)
+        print(f"print grasp rotation from camera in AnyGrasp:{grasp_rotation_camera}")
+        # grasp_rotation_isaaclab = torch.matmul(torch.matmul(self.ee_T_anygrasp_isaaclab,grasp_rotation_camera), self.ee_T_anygrasp_isaaclab.transpose(-2, -1))
+        grasp_rotation_isaaclab = change_ee_coordinate_to_isaac_lab(grasp_rotation_camera)
+        #grasp_rotation_isaaclab = torch.tensor([
+        #    [ 1.0, 0.0, 0.0],
+        #    [ 0.0, 1.0, 0.0],
+        #    [ 0.0, 0.0, 1.0]
+        #], device =self.device).repeat(self.num_envs, 1, 1)
+        print(f"print grasp rotation in isaac lab:{grasp_rotation_isaaclab}")
+
         AnyGrasp_grasp_coordinate_rotation_isaaclab = self.model_coordinate_rotation_to_issaclab
-        grasp_rotation_camera = torch.matmul(AnyGrasp_grasp_coordinate_rotation_isaaclab, grasp_rotation_camera)
+        grasp_rotation_camera_isaaclab = torch.matmul(AnyGrasp_grasp_coordinate_rotation_isaaclab, grasp_rotation_camera)
+        print(f"print grasp rotation from camera in isaac lab camera coordinate:{grasp_rotation_camera_isaaclab}")
+
 
         # Transform grasping position to world frame
         grasp_translation_world = (
@@ -486,7 +572,9 @@ class PickAndLiftSm:
         )
 
         # Transform grasping orientation to world frame
-        grasp_rotation_world = torch.matmul(camera_rotation_world, grasp_rotation_camera)
+        grasp_rotation_world = torch.matmul(camera_rotation_world, grasp_rotation_isaaclab)
+        print(f"print grasp rotation from camera in isaac lab world coordinate:{grasp_rotation_world}")
+
 
         # Output results
         # print("Grasping position in world coordinates (translation):")
@@ -509,16 +597,21 @@ class PickAndLiftSm:
             torch.matmul(robot_root_rotation_inverse, grasp_translation_world.unsqueeze(-1)).squeeze(-1) +
             robot_root_translation_inverse
         )
-        # grasp_rotation_robot_root = torch.matmul(robot_root_rotation_inverse, grasp_rotation_world)
-        # grasp_orientation_robot_root = quat_from_matrix(grasp_rotation_robot_root)
-        grasp_orientation_robot_root = torch.tensor([0.0, 1.0, 0.0, 0.0], device=self.device).repeat(self.num_envs,1)
-        grasp_rotation_robot_root = matrix_from_quat(grasp_orientation_robot_root)
+        
+        
+        grasp_rotation_robot_root = torch.matmul(robot_root_rotation_inverse, grasp_rotation_world)
+        print(f"print grasp rotation from robot root:{grasp_rotation_robot_root}" ) 
+        # grasp_rotation_robot_root = torch.matmul(grasp_rotation_robot_root,self.ee_rotation_to_table)
+        grasp_orientation_robot_root = quat_from_matrix(grasp_rotation_robot_root)
+        print(f"grasp orientation quat:{grasp_orientation_robot_root}")
+        # grasp_orientation_robot_root = torch.tensor([0.0, 1.0, 0.0, 0.0], device=self.device).repeat(self.num_envs,1)
+        # grasp_rotation_robot_root = matrix_from_quat(grasp_orientation_robot_root)
 
 
         # 从 grasp_orientation_robot_root 计算方向向量
         direction_vector = torch.matmul(grasp_rotation_robot_root, torch.tensor([0.0, 0.0, 1.0], device=self.device).unsqueeze(-1)).squeeze(-1)
 
-        # 计算起点（source_point），即距离 grasp_translation_robot_root 为 0.1 且方向相反的点
+        # 计算起点（source_point），即距离 grasp_translation_robot_root 为 0.05 且方向相反的点
         source_point = grasp_translation_robot_root - 0.05 * direction_vector
         # Output results
         # print("Grasping position in robot root coordinates (translation):")
@@ -584,9 +677,9 @@ def main():
         # Defualt Grasp Result
         translation_env_nums = torch.tensor([0.0, 0.0, 0.0], device=env.unwrapped.device).repeat(env.unwrapped.num_envs,1)
         rotation_env_nums = torch.tensor([
-            [1.0000e+00,         0.0,        0.0],
-            [       0.0,  1.0000e+00,        0.0],
-            [       0.0,         0.0, 1.0000e+00]
+            [       0.0,         0.0, 1.0000e+00],
+            [       0.0, -1.0000e+00,        0.0],
+            [1.0000e+00,         0.0,        0.0]
         ], device=env.unwrapped.device).repeat(env.unwrapped.num_envs, 1, 1)
 
 
@@ -611,8 +704,8 @@ def main():
             desired_position = env.unwrapped.command_manager.get_command("object_pose")[..., :3]
             # print(f"print current desired pos:{torch.cat([desired_position, desired_orientation], dim=-1)}")
 
-            print(f"print ros node translation_env_nums data:{isaaclab_node.translation_env_nums}")
-            print(f"print ros node rotation_env_nums data:{isaaclab_node.rotation_env_nums}")
+            # print(f"print ros node translation_env_nums data:{isaaclab_node.translation_env_nums}")
+            # print(f"print ros node rotation_env_nums data:{isaaclab_node.rotation_env_nums}")
             
             if isaaclab_node.translation_env_nums == None or isaaclab_node.rotation_env_nums == None:
                 ros_msg_received = torch.full((env.unwrapped.num_envs,), 0.0, device=env.unwrapped.device)
@@ -708,9 +801,9 @@ def main():
                 # Defualt Grasp Result
                 translation_env_nums = torch.tensor([0.0, 0.0, 0.0], device=env.unwrapped.device).repeat(env.unwrapped.num_envs,1)
                 rotation_env_nums = torch.tensor([
-                    [1.0000e+00,         0.0,        0.0],
-                    [       0.0,  1.0000e+00,        0.0],
-                    [       0.0,         0.0, 1.0000e+00]
+                    [       0.0,         0.0, 1.0000e+00],
+                    [       0.0, -1.0000e+00,        0.0],
+                    [1.0000e+00,         0.0,        0.0]
                 ], device=env.unwrapped.device).repeat(env.unwrapped.num_envs, 1, 1)
 
 

@@ -25,6 +25,30 @@ cfgs.max_gripper_width = max(0, min(0.1, cfgs.max_gripper_width))
 # 假設您的模型模組在此處引入
 # from your_model_module import YourModelClass
 
+def is_rotation_exceeding_threshold(R2, threshold_deg=25):
+
+    """
+    判断旋转矩阵 R2 与 R1 在 x 轴方向的绝对角度差是否超过阈值。
+    """
+    R1 = np.array([[0.0, 0.0, 1.0],
+                   [0.0, -1.0, 0.0],
+                   [1.0, 0.0, 0.0]])
+    # 转换阈值为弧度
+    threshold_rad = np.deg2rad(threshold_deg)
+    
+    # 提取 R1 和 R2 的 x 轴方向的向量
+    x_axis_R1 = R1[:, 0]  # R1 的第一列，表示 x 轴方向
+    x_axis_R2 = R2[:, 0]  # R2 的第一列，表示 x 轴方向
+
+    # 计算 x 轴向量之间的夹角
+    dot_product = np.dot(x_axis_R1, x_axis_R2)  # 点积
+    cos_theta = np.clip(dot_product, -1.0, 1.0)  # 防止数值误差
+    theta = np.arccos(cos_theta)  # 夹角（弧度制）
+
+    # 判断是否超过阈值
+    return theta > threshold_rad  # 返回是否超过阈值
+    
+
 class VisionModel:
     def __init__(self):
         self.anygrasp = AnyGrasp(cfgs)
@@ -43,9 +67,9 @@ class VisionModel:
         self.scale = 1 # for omniverse camera, since the distance unit of omniverse is also meter
     
         # set workspace to filter output grasps
-        self.xmin, self.xmax = -0.1, 0.5
+        self.xmin, self.xmax = -0.2, 0.5
         self.ymin, self.ymax = -0.5, 0.5
-        self.zmin, self.zmax = 0.0, 1.0
+        self.zmin, self.zmax = 0.6, 1.0
 
         self.lims = [self.xmin, self.xmax, self.ymin, self.ymax, self.zmin, self.zmax]
     
@@ -77,15 +101,23 @@ class VisionModel:
             return {"translation": None, "rotation": None}
 
         gg = gg.nms().sort_by_score()
-        gg_pick = gg[0:20]
-        # get translation and rotation
-        translation = gg_pick[0].translation 
-        rotation_matrix = gg_pick[0].rotation_matrix
 
-        return {
-            "translation": translation,
-            "rotation": rotation_matrix
-        }
+        #rect_gg = gg.to_rect_grasp_group()
+        gg_pick = gg[0:20]
+
+        valid_grasp=[]
+        for i in gg_pick:
+            if not is_rotation_exceeding_threshold(i.rotation_matrix):
+                valid_grasp.append({
+                    "translation": i.translation.tolist(),
+                    "rotation": i.rotation_matrix.tolist()
+                })
+        if valid_grasp:
+            return valid_grasp[0]
+        else:
+            print(f"No valid grasp after filtering")
+            return{"translation": None, "rotation": None}
+
     
 def convert_to_serializable(obj):
     """
