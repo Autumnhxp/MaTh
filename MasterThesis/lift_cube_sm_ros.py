@@ -684,6 +684,13 @@ def main():
             [1.0000e+00,         0.0,        0.0]
         ], device=env.unwrapped.device).repeat(env.unwrapped.num_envs, 1, 1)
 
+    cycle_count = 0
+    all_anygrasp_results={}
+    grasped_object_results = {} 
+    reach_desired_pose_results ={}
+    previous_distances = torch.zeros((env.unwrapped.num_envs, 3), device=env.unwrapped.device)
+    persistent_distance_changes = torch.zeros(env.unwrapped.num_envs, dtype=torch.bool, device=env.unwrapped.device)
+    reach_transferring_pose = torch.zeros(env.unwrapped.num_envs, dtype=torch.bool, device=env.unwrapped.device)
 
     while simulation_app.is_running():
         # run everything in inference mode
@@ -709,9 +716,24 @@ def main():
             #print(f"print desired_transferring position:{desired_position}")
             # print(f"print current desired pos:{torch.cat([desired_position, desired_orientation], dim=-1)}")
 
-            print(f"print current distance between ee and object:{object_position - tcp_rest_position}")
-            print(f"print current distance betweem ee and desired transferring position:{desired_position-tcp_rest_position}")
-
+            current_distances = object_position - tcp_rest_position
+            print(f"print current distance between ee and object:{current_distances}")
+            
+            distances_ee_dtp = desired_position-tcp_rest_orientation
+            print(f"print current distance betweem ee and desired transferring position:{distances_ee_dtp}")
+            
+            # 检查 sm_state 是否为 7 并比较距离变化
+            for env_idx, sm_state in enumerate(pick_sm.sm_state_wp.tolist()):
+                if sm_state == 7:
+                    # 计算当前距离变化
+                    distance_change = torch.abs(current_distances[env_idx] - previous_distances[env_idx])
+                    if (distance_change > 0.05).any():
+                        persistent_distance_changes[env_idx] = True  # 标记为 True (object falling down)
+                    
+                    abs_distances_ee_dtp = torch.abs(distances_ee_dtp)
+                    if (abs_distances_ee_dtp < 0.01).all():
+                        reach_transferring_pose[env_idx] = True          
+            previous_distances = current_distances.clone()
             #print(f"print ros node translation_env_nums data:{isaaclab_node.translation_env_nums}")
             #print(f"print ros node rotation_env_nums data:{isaaclab_node.rotation_env_nums}")
             #print(f"print grasp result data:{isaaclab_node.grasp_results_data}")
@@ -830,8 +852,39 @@ def main():
 
             # print(f"print current camera state:{pick_sm.take_foto_wp}")
 
-            # reset state machine
             if dones.any():
+                # 初始化当前周期的结果字典
+                anygrasp_result = {}
+                grasped_object_result = {}
+                reach_desired_pose_result = {}
+
+                # 遍历当前状态机状态，生成 [cycle数目]_[env_nums] 格式的 key
+                for env_idx, state in enumerate(pick_sm.sm_state_wp.tolist()):
+                    key = f"{cycle_count}_{env_idx}"
+                    # 更新 anygrasp_result
+                    if state == 7:
+                        anygrasp_result[key] = 1
+                    elif state == 2:
+                        anygrasp_result[key] = 0
+                    else:
+                        anygrasp_result[key] = -1
+
+                    # 更新 distance_change_result
+                    grasped_object_result[key] = not persistent_distance_changes[env_idx].item()
+
+                    reach_desired_pose_result[key] = reach_transferring_pose[env_idx].item()
+
+                # 将当前周期结果保存到全局存储
+                all_anygrasp_results.update(anygrasp_result)
+                grasped_object_results.update(grasped_object_result)
+                reach_desired_pose_results.update(reach_desired_pose_result)
+
+                # 增加 cycle_count
+                cycle_count += 1
+
+                # reset state machine
+                persistent_distance_changes = torch.zeros(env.unwrapped.num_envs, dtype=torch.bool, device=env.unwrapped.device)
+                reach_transferring_pose = torch.zeros(env.unwrapped.num_envs, dtype=torch.bool, device=env.unwrapped.device) 
                 pick_sm.reset_idx(dones.nonzero(as_tuple=False).squeeze(-1))
                 all_writer_saved_paths = {}
                 # Defualt Grasp Result
@@ -844,6 +897,17 @@ def main():
 
 
     # close the environment
+    os.makedirs(output_dir_base, exist_ok=True)
+    output_file = os.path.join(output_dir_base, "all_anygrasp_results.json")
+    with open(output_file, "w") as f:
+        json.dump(all_anygrasp_results, f, indent=4)
+    output_file = os.path.join(output_dir_base,"all_grasped_object_results.json")
+    with open(output_file, "w") as f:
+        json.dump(grasped_object_results, f, indent=4)
+    output_file = os.path.join(output_dir_base,"reach_desired_pose_results.json")
+    with open(output_file, "w") as f:
+        json.dump(reach_desired_pose_results, f, indent=4)
+
     env.close()
     isaaclab_node.destroy_node()
     rclpy.shutdown()
