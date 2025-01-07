@@ -82,7 +82,7 @@ Nailing_gear = RigidObjectCfg(
 Nailing_insertionhandle = RigidObjectCfg(
         prim_path="{ENV_REGEX_NS}/Nailing_insertionhandle",
         # Error: W
-        init_state=RigidObjectCfg.InitialStateCfg(pos=[0.4, 0.0, 0.0], rot=[0.71, 0, 0, 0.71]), #need adjustment
+        init_state=RigidObjectCfg.InitialStateCfg(pos=[0.4, 0.0, 0.0], rot=[0.71, 0, 0.71, 0]), #need adjustment
         spawn=UsdFileCfg(
             usd_path=os.path.join(current_dir, "Nailing_insertionhandle.usd"),
             scale=(0.001, 0.001, 0.001),

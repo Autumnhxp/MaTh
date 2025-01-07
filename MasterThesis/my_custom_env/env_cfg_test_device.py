@@ -66,7 +66,7 @@ class ObjectTableSceneCfg(InteractiveSceneCfg):
     #    )
     
     # object2
-    object2: RigidObjectCfg = nailing_system.Nailing_stick
+    object2: RigidObjectCfg = nailing_system.Nailing_aimingram
 
     # Table
     table = AssetBaseCfg(

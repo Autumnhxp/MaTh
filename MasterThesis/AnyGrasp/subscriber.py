@@ -25,7 +25,7 @@ cfgs.max_gripper_width = max(0, min(0.1, cfgs.max_gripper_width))
 # 假設您的模型模組在此處引入
 # from your_model_module import YourModelClass
 
-def is_rotation_exceeding_threshold(R2, threshold_deg=25):
+def is_rotation_exceeding_threshold(R2, threshold_deg=30):
 
     """
     判断旋转矩阵 R2 与 R1 在 x 轴方向的绝对角度差是否超过阈值。

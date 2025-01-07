@@ -26,7 +26,7 @@ parser = argparse.ArgumentParser(description="Pick and lift state machine for li
 parser.add_argument(
     "--disable_fabric", action="store_true", default=False, help="Disable fabric and use USD I/O operations."
 )
-parser.add_argument("--num_envs", type=int, default=2, help="Number of environments to simulate.")
+parser.add_argument("--num_envs", type=int, default=4, help="Number of environments to simulate.")
 # append AppLauncher cli args
 AppLauncher.add_app_launcher_args(parser)
 # parse the arguments
@@ -135,8 +135,7 @@ class IsaacLab(Node):
             # self.get_logger().info(f'Data of grasp_results : {self.grasp_results_data}')
 
             # 提取抓取结果并转换为 PyTorch 张量
-            grasp_results = data.get('grasp_results', {})
-            num_envs = len(grasp_results)  # 根据抓取结果确定环境数量
+            num_envs = len(self.grasp_results_data)  # 根据抓取结果确定环境数量
 
             # 创建 translation 和 rotation 的张量列表
             translations = []
@@ -144,10 +143,12 @@ class IsaacLab(Node):
 
             for env_id in range(num_envs):
                 env_id_str = str(env_id)
-                env_result = grasp_results.get(env_id_str, {})
+                env_result = self.grasp_results_data.get(env_id_str, {})
                 translation = env_result.get('translation')
                 rotation = env_result.get('rotation')
-            
+
+                translation = translation if translation is not None else [0.0, 0.0, 0.0]
+                rotation = rotation if rotation is not None else [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0]]
                 translations.append(torch.tensor(translation, dtype=torch.float32))
                 rotations.append(torch.tensor(rotation, dtype=torch.float32))
 
@@ -167,6 +168,7 @@ class IsaacLab(Node):
                 self.translation_env_nums = translation_env_nums
                 self.rotation_env_nums = rotation_env_nums
             else:
+                self.grasp_results_data = None
                 self.translation_env_nums = None
                 self.rotation_env_nums = None
         
@@ -281,9 +283,9 @@ class PickSmWaitTime:
 
     REST = wp.constant(0.4)
     CAMERA = wp.constant(1.6)
-    DEFAULT_POSE = wp.constant(2.0)
+    DEFAULT_POSE = wp.constant(1.2)
     APPROACH_ABOVE_OBJECT = wp.constant(1.2)
-    APPROACH_OBJECT = wp.constant(2.0)
+    APPROACH_OBJECT = wp.constant(1.2)
     GRASP_OBJECT = wp.constant(0.8)
     LIFT_OBJECT = wp.constant(1.2)
 
@@ -541,7 +543,7 @@ class PickAndLiftSm:
         # Grasping pose in camera frame
         grasp_translation_camera = translations
         # hand_traslation_from_EE = torch.tensor([0.0, 0.0, 0.1034], device=self.device)
-        hand_traslation_from_EE = torch.tensor([0.0, 0.0, 0.1034-0.009], device=self.device).repeat(self.num_envs,1)
+        hand_traslation_from_EE = torch.tensor([0.0, 0.0, 0.05], device=self.device).repeat(self.num_envs,1)
         EE_translation_camera = grasp_translation_camera - hand_traslation_from_EE
         grasp_rotation_camera = rotations
         grasp_rotation_camera = adjust_matrices_torch(rotations)
@@ -550,7 +552,7 @@ class PickAndLiftSm:
         #    [ 0.0,  0.0, -1.0],
         #    [ 1.0,  0.0, 0.0]
         #], device=self.device).repeat(self.num_envs, 1, 1)
-        print(f"print grasp rotation from camera in AnyGrasp:{grasp_rotation_camera}")
+        #print(f"print grasp rotation from camera in AnyGrasp:{grasp_rotation_camera}")
         # grasp_rotation_isaaclab = torch.matmul(torch.matmul(self.ee_T_anygrasp_isaaclab,grasp_rotation_camera), self.ee_T_anygrasp_isaaclab.transpose(-2, -1))
         grasp_rotation_isaaclab = change_ee_coordinate_to_isaac_lab(grasp_rotation_camera)
         #grasp_rotation_isaaclab = torch.tensor([
@@ -558,11 +560,11 @@ class PickAndLiftSm:
         #    [ 0.0, 1.0, 0.0],
         #    [ 0.0, 0.0, 1.0]
         #], device =self.device).repeat(self.num_envs, 1, 1)
-        print(f"print grasp rotation in isaac lab:{grasp_rotation_isaaclab}")
+        #print(f"print grasp rotation in isaac lab:{grasp_rotation_isaaclab}")
 
         AnyGrasp_grasp_coordinate_rotation_isaaclab = self.model_coordinate_rotation_to_issaclab
         grasp_rotation_camera_isaaclab = torch.matmul(AnyGrasp_grasp_coordinate_rotation_isaaclab, grasp_rotation_camera)
-        print(f"print grasp rotation from camera in isaac lab camera coordinate:{grasp_rotation_camera_isaaclab}")
+        #print(f"print grasp rotation from camera in isaac lab camera coordinate:{grasp_rotation_camera_isaaclab}")
 
 
         # Transform grasping position to world frame
@@ -573,7 +575,7 @@ class PickAndLiftSm:
 
         # Transform grasping orientation to world frame
         grasp_rotation_world = torch.matmul(camera_rotation_world, grasp_rotation_isaaclab)
-        print(f"print grasp rotation from camera in isaac lab world coordinate:{grasp_rotation_world}")
+        #print(f"print grasp rotation from camera in isaac lab world coordinate:{grasp_rotation_world}")
 
 
         # Output results
@@ -600,10 +602,10 @@ class PickAndLiftSm:
         
         
         grasp_rotation_robot_root = torch.matmul(robot_root_rotation_inverse, grasp_rotation_world)
-        print(f"print grasp rotation from robot root:{grasp_rotation_robot_root}" ) 
+        #print(f"print grasp rotation from robot root:{grasp_rotation_robot_root}" ) 
         # grasp_rotation_robot_root = torch.matmul(grasp_rotation_robot_root,self.ee_rotation_to_table)
         grasp_orientation_robot_root = quat_from_matrix(grasp_rotation_robot_root)
-        print(f"grasp orientation quat:{grasp_orientation_robot_root}")
+        #print(f"grasp orientation quat:{grasp_orientation_robot_root}")
         # grasp_orientation_robot_root = torch.tensor([0.0, 1.0, 0.0, 0.0], device=self.device).repeat(self.num_envs,1)
         # grasp_rotation_robot_root = matrix_from_quat(grasp_orientation_robot_root)
 
@@ -695,17 +697,24 @@ def main():
             ee_frame_sensor = env.unwrapped.scene["ee_frame"]
             tcp_rest_position = ee_frame_sensor.data.target_pos_w[..., 0, :].clone() - env.unwrapped.scene.env_origins
             tcp_rest_orientation = ee_frame_sensor.data.target_quat_w[..., 0, :].clone()
+            #print(f"print ee frame position:{tcp_rest_position}")
+
             # print(f"print current ee_frame:{torch.cat([tcp_rest_position, tcp_rest_orientation], dim=-1)}")
             # -- object frame
             object_data: RigidObjectData = env.unwrapped.scene["object2"].data
             object_position = object_data.root_pos_w - env.unwrapped.scene.env_origins
-            # print(f"print current object pos:{torch.cat([object_position, desired_orientation], dim=-1)}")
+            #print(f"print current object position:{object_position}")
             # -- target object frame
             desired_position = env.unwrapped.command_manager.get_command("object_pose")[..., :3]
+            #print(f"print desired_transferring position:{desired_position}")
             # print(f"print current desired pos:{torch.cat([desired_position, desired_orientation], dim=-1)}")
 
-            # print(f"print ros node translation_env_nums data:{isaaclab_node.translation_env_nums}")
-            # print(f"print ros node rotation_env_nums data:{isaaclab_node.rotation_env_nums}")
+            print(f"print current distance between ee and object:{object_position - tcp_rest_position}")
+            print(f"print current distance betweem ee and desired transferring position:{desired_position-tcp_rest_position}")
+
+            #print(f"print ros node translation_env_nums data:{isaaclab_node.translation_env_nums}")
+            #print(f"print ros node rotation_env_nums data:{isaaclab_node.rotation_env_nums}")
+            #print(f"print grasp result data:{isaaclab_node.grasp_results_data}")
             
             if isaaclab_node.translation_env_nums == None or isaaclab_node.rotation_env_nums == None:
                 ros_msg_received = torch.full((env.unwrapped.num_envs,), 0.0, device=env.unwrapped.device)
@@ -713,9 +722,36 @@ def main():
                 ros_msg_received = torch.full((env.unwrapped.num_envs,), 1.0, device=env.unwrapped.device)
                 translation_env_nums = isaaclab_node.translation_env_nums.to(env.unwrapped.device)  # (num_envs, 3)
                 rotation_env_nums = isaaclab_node.rotation_env_nums.to(env.unwrapped.device)  # (num_envs, 3, 3)
+                    
+                # Check for rows in translation_env_nums that are [0.0, 0.0, 0.0]
+                zero_translation_mask = torch.all(translation_env_nums == 0.0, dim=1)  # Shape: (num_envs,)
 
-            print(f"print translation_env_nums data:{translation_env_nums}")
-            print(f"print rotation_env_nums data:{rotation_env_nums}")
+                # Check for matrices in rotation_env_nums that are all zeros
+                zero_rotation_mask = torch.all(rotation_env_nums == 0.0, dim=(1, 2))  # Shape: (num_envs,)
+
+                # Replace zero matrices in rotation_env_nums with the specific matrix
+                replacement_matrix = torch.tensor([
+                [0.0, 0.0, 1.0],
+                [0.0, -1.0, 0.0],
+                [1.0, 0.0, 0.0]
+                ], dtype=torch.float32, device=env.unwrapped.device)
+
+                # Identify indices of zero rotation matrices
+                zero_rotation_indices = torch.where(zero_rotation_mask)[0]
+                for idx in zero_rotation_indices:
+                    rotation_env_nums[idx] = replacement_matrix
+
+                # Combine the masks to identify environments where translation or rotation is invalid
+                invalid_mask = zero_translation_mask | zero_rotation_mask  # Logical OR, Shape: (num_envs,)
+
+                # Set ros_msg_received to 0.0 for invalid environments
+                ros_msg_received[invalid_mask] = 0.0
+
+
+
+            #print(f"print translation_env_nums data:{translation_env_nums}")
+            #print(f"print rotation_env_nums data:{rotation_env_nums}")
+            print(f"print ros_msg_received:{ros_msg_received}")
 
                 # 使用 translation 和 rotation 张量
                 # print(f"Translation Matrices:\n{translation_env_nums}")
