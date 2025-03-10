@@ -791,7 +791,7 @@ def main():
         rep_writers.append(rep_writer)
 
 
-    # Defualt Grasp Result
+    # Default Grasp Result
     translation_env_nums = torch.tensor([0.0, 0.0, 0.0], device=env.unwrapped.device).repeat(env.unwrapped.num_envs,1)
     rotation_env_nums = torch.tensor([
         [       0.0,         0.0, 1.0000e+00],
@@ -839,7 +839,7 @@ def main():
             print(f"print current distance between ee and object:{current_distances}")
             
             distances_ee_dtp = desired_position - tcp_rest_position
-            print(f"print current distance betweem ee and desired transferring position:{distances_ee_dtp}")
+            print(f"print current distance between ee and desired transferring position:{distances_ee_dtp}")
             
             # Monitor object stability and pose accuracy
             for env_idx, sm_state in enumerate(pick_sm.sm_state):

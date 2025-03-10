@@ -108,7 +108,7 @@ Nailing_nail = RigidObjectCfg(
         prim_path="{ENV_REGEX_NS}/Nailing_nail",
         # Change the orientation or position to keep object in camera frame for AnyGrasp to generation Grasp Pose
         # Error Pose: pos=[0.5, 0.0, 0.0], rot=[1, 0, 0, 0] 
-        # Error when the grasping position is too close to the table: The friction force interupts the grasping process 
+        # Error when the grasping position is too close to the table: The friction force interrupts the grasping process 
         init_state=RigidObjectCfg.InitialStateCfg(pos=[0.5, 0.1, 0.0], rot=[1, 0, 0, 0]), 
         spawn=UsdFileCfg(
             usd_path=os.path.join(current_dir, "Nailing_nail.usd"),
