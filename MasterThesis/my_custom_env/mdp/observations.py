@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 def object_position_in_robot_root_frame(
     env: ManagerBasedRLEnv,
     robot_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
-    object_cfg: SceneEntityCfg = SceneEntityCfg("object2"),
+    object_cfg: SceneEntityCfg = SceneEntityCfg("object"),
 ) -> torch.Tensor:
     """The position of the object in the robot's root frame."""
     robot: RigidObject = env.scene[robot_cfg.name]

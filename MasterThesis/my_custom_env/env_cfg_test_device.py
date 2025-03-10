@@ -47,26 +47,10 @@ class ObjectTableSceneCfg(InteractiveSceneCfg):
     robot: ArticulationCfg = MISSING
     # end-effector sensor: will be populated by agent env cfg
     ee_frame: FrameTransformerCfg = MISSING
-    # target object: will be populated by agent env cfg
-    # object1: RigidObjectCfg = RigidObjectCfg(
-    #     prim_path="{ENV_REGEX_NS}/Object_Cube",
-    #     init_state=RigidObjectCfg.InitialStateCfg(pos=[0.5, 0, 0.055], rot=[1, 0, 0, 0]),
-    #     spawn=UsdFileCfg(
-    #         usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/Blocks/DexCube/dex_cube_instanceable.usd",
-    #         scale=(0.8, 0.8, 0.8),
-    #         rigid_props=RigidBodyPropertiesCfg(
-    #             solver_position_iteration_count=16,
-    #             solver_velocity_iteration_count=1,
-    #             max_angular_velocity=1000.0,
-    #             max_linear_velocity=1000.0,
-    #             max_depenetration_velocity=5.0,
-    #             disable_gravity=False,
-    #             ),
-    #         ),
-    #    )
     
-    # object2
-    object2: RigidObjectCfg = nailing_system.Nailing_aimingram
+    # target object: will be populated by agent env cfg    
+    # replace with the object you want to use
+    object: RigidObjectCfg = nailing_system.Nailing_aimingram
 
     # Table
     table = AssetBaseCfg(
@@ -197,7 +181,7 @@ class EventCfg:
         params={
             "pose_range": {"x": (0.0, 0.0), "y": (0.0, 0.0), "z": (0.0, 0.0)},
             "velocity_range": {},
-            "asset_cfg": SceneEntityCfg("object2", body_names="Mesh"),
+            "asset_cfg": SceneEntityCfg("object", body_names="Mesh"),
         },
     )
 
@@ -239,7 +223,7 @@ class TerminationsCfg:
     time_out = DoneTerm(func=mdp.time_out, time_out=True)
 
     object_dropping = DoneTerm(
-        func=mdp.root_height_below_minimum, params={"minimum_height": -0.05, "asset_cfg": SceneEntityCfg("object2")}
+        func=mdp.root_height_below_minimum, params={"minimum_height": -0.05, "asset_cfg": SceneEntityCfg("object")}
     )
 
 

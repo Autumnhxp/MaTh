@@ -64,8 +64,8 @@ class ObjectTableSceneCfg(InteractiveSceneCfg):
             ),
         )
     
-    # object2
-    object2: RigidObjectCfg = RigidObjectCfg(
+    # object
+    object: RigidObjectCfg = RigidObjectCfg(
             prim_path="{ENV_REGEX_NS}/Object_Cylinder",
             init_state=RigidObjectCfg.InitialStateCfg(pos=[0.3, 0.0, 0.0],rot=[1, 0, 0, 0]),
             spawn=MeshCylinderCfg(
@@ -219,7 +219,7 @@ class EventCfg:
         params={
             "pose_range": {"x": (0.0, 0.0), "y": (0.0, 0.0), "z": (0.0, 0.0)},
             "velocity_range": {},
-            "asset_cfg": SceneEntityCfg("object2", body_names="Object_Cylinder"),
+            "asset_cfg": SceneEntityCfg("object", body_names="Object_Cylinder"),
         },
     )
 
@@ -261,7 +261,7 @@ class TerminationsCfg:
     time_out = DoneTerm(func=mdp.time_out, time_out=True)
 
     object_dropping = DoneTerm(
-        func=mdp.root_height_below_minimum, params={"minimum_height": -0.05, "asset_cfg": SceneEntityCfg("object2")}
+        func=mdp.root_height_below_minimum, params={"minimum_height": -0.05, "asset_cfg": SceneEntityCfg("object")}
     )
 
 

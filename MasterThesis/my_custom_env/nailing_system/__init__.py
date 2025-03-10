@@ -5,7 +5,7 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 
 from omni.isaac.lab.assets import RigidObjectCfg
 from omni.isaac.lab.sim.schemas.schemas_cfg import RigidBodyPropertiesCfg, MassPropertiesCfg ,CollisionPropertiesCfg
-from omni.isaac.lab.sim.spawners.from_files.from_files_cfg import GroundPlaneCfg, UsdFileCfg
+from omni.isaac.lab.sim.spawners.from_files.from_files_cfg import UsdFileCfg
 
 Nailing_aimingram = RigidObjectCfg(
         prim_path="{ENV_REGEX_NS}/Nailing_aimingarm",

@@ -4,15 +4,27 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 """
-Script to run an environment with a pick and lift state machine.
+Operating Room Robotic Manipulation Simulation
 
-The state machine is implemented in the kernel function `infer_state_machine`.
-It uses the `warp` library to run the state machine in parallel on the GPU.
+This script simulates robotic manipulation tasks in an operating room environment using Isaac Sim.
+It implements a state machine-based control system that:
+1. Captures RGBD images of the scene
+2. Communicates with AnyGrasp for grasp pose detection
+3. Controls robot motion for pick-and-place operations
+4. Validates successful grasps and object placement
 
-.. code-block:: bash
+Key Components:
+- State Machine: Manages the robot's behavioral states (REST, CAMERA, GRASP, etc.)
+- ROS 2 Bridge: Communicates with AnyGrasp system for grasp pose computation
+- Vision System: Captures and processes RGBD data
+- Motion Control: Executes computed trajectories
 
-    ./isaaclab.sh -p source/standalone/environments/state_machine/lift_cube_sm.py --num_envs 32
+Usage:
+    ./isaaclab.sh -p source/standalone/environments/state_machine/lift_cube_sm.py --num_envs <num_envs>
 
+Parameters:
+    --num_envs: Number of parallel environments to simulate
+    --disable_fabric: Disable fabric and use USD I/O operations
 """
 
 """Launch Omniverse Toolkit first."""
@@ -22,11 +34,19 @@ import argparse
 from omni.isaac.lab.app import AppLauncher
 
 # add argparse arguments
-parser = argparse.ArgumentParser(description="Pick and lift state machine for lift environments.")
+parser = argparse.ArgumentParser(description="Operating Room Robotic Manipulation Simulation")
 parser.add_argument(
-    "--disable_fabric", action="store_true", default=False, help="Disable fabric and use USD I/O operations."
+    "--disable_fabric", 
+    action="store_true", 
+    default=False, 
+    help="Disable fabric and use USD I/O operations"
 )
-parser.add_argument("--num_envs", type=int, default=4, help="Number of environments to simulate.")
+parser.add_argument(
+    "--num_envs", 
+    type=int, 
+    default=4, 
+    help="Number of parallel environments to simulate"
+)
 # append AppLauncher cli args
 AppLauncher.add_app_launcher_args(parser)
 # parse the arguments
@@ -66,67 +86,93 @@ from omni.isaac.lab_tasks.utils.parse_cfg import parse_env_cfg
 try:
     import rclpy
     from rclpy.node import Node
-    from rclpy.qos import QoSProfile
     from std_msgs.msg import Header, Float32MultiArray, Int8MultiArray, String
     from sensor_msgs.msg import PointCloud2, PointField
     import threading
     import json
     import time
+    import logging
     print("import rclpy success!")
 except:
     print("import rclpy failed")
 
-# ROS 2 Publisher Node
+# ROS 2 Node for Isaac Lab Simulation
 class IsaacLab(Node):
+    """
+    ROS 2 Node that handles communication between Isaac Sim and AnyGrasp.
+    
+    Publishers:
+        - sm_state_wp: Current state of the state machine
+        - take_foto_wp: Camera trigger signals
+        - file_paths: RGBD image file paths
+        
+    Subscribers:
+        - grasp_results: Grasp poses computed by AnyGrasp
+    """
     def __init__(self):
         super().__init__('IsaacLab')
-        # Publisher
+        
+        # Initialize publishers
         self.state_publisher_ = self.create_publisher(Int8MultiArray, 'sm_state_wp', 10)
         self.foto_publisher_ = self.create_publisher(Float32MultiArray, 'take_foto_wp', 10)
         self.file_paths_publicher_ = self.create_publisher(String, 'file_paths', 10)
-        # Subscriber
+        
+        # Initialize subscriber for grasp results
         self.grasp_results_subscription = self.create_subscription(
             String,
             'grasp_results',
             self.listener_callback,
             10
         )
-        self.timer = self.create_timer(0.5, self.timer_callback)  # 每 0.5 秒發佈一次
-        # 用於儲存從主程序更新的資料
-        self.sm_state_wp_data = None
-        self.take_foto_wp_data = None
-        self.file_paths_data = None
-        self.grasp_results_data = None
-        self.translation_env_nums = None
-        self.rotation_env_nums = None
+        
+        # Timer for periodic publishing (0.5 second interval)
+        self.timer = self.create_timer(0.5, self.timer_callback)
+        
+        # Data storage for communication between main process and ROS node
+        self.sm_state_wp_data = None  # State machine states
+        self.take_foto_wp_data = None  # Camera trigger signals
+        self.file_paths_data = None    # RGBD image paths
+        self.grasp_results_data = None  # Received grasp poses
+        self.translation_env_nums = None  # Grasp translations
+        self.rotation_env_nums = None     # Grasp rotations
 
     def update_data(self, sm_state, take_foto, file_paths):
-        """更新需要發佈的資料"""
+        """
+        Update data to be published to ROS topics.
+        
+        Args:
+            sm_state: State machine states for each environment
+            take_foto: Camera trigger signals for each environment
+            file_paths: Dictionary of RGBD image file paths
+        """
         self.sm_state_wp_data = sm_state
         self.take_foto_wp_data = take_foto
         self.file_paths_data = file_paths
 
     def timer_callback(self):
+        """Periodic callback to publish data to ROS topics."""
+        # Publish state machine states
         if self.sm_state_wp_data is not None:
             msg_sm_state = Int8MultiArray()
-            msg_sm_state.data = self.sm_state_wp_data.numpy().tolist()  # 轉換為列表發佈
+            msg_sm_state.data = self.sm_state_wp_data.numpy().tolist()
             self.state_publisher_.publish(msg_sm_state)
-            # self.get_logger().info(f'Published sm_state_wp: {msg_sm_state.data}')
+
+        # Publish camera trigger signals
         if self.take_foto_wp_data is not None:
             msg_take_foto = Float32MultiArray()
-            msg_take_foto.data = self.take_foto_wp_data.numpy().tolist()  # 轉換為列表發佈
+            msg_take_foto.data = self.take_foto_wp_data.numpy().tolist()
             self.foto_publisher_.publish(msg_take_foto)
-            # self.get_logger().info(f'Published take_foto_wp: {msg_take_foto.data}')
+
+        # Publish RGBD image file paths
         if self.file_paths_data is not None:
             try:
                 file_paths_json = json.dumps(self.file_paths_data)
                 msg_file_paths = String()
                 msg_file_paths.data = file_paths_json
                 self.file_paths_publicher_.publish(msg_file_paths)
-                # self.get_logger().info(f"Published file paths:\n{file_paths_json}")
             except Exception as e:
                 self.get_logger().error(f"Failed to publish file paths: {e}")
-    
+
     def listener_callback(self, msg): 
         try:
             data = json.loads(msg.data)
@@ -134,10 +180,10 @@ class IsaacLab(Node):
             # self.get_logger().info(f'Received data from Python 3.8: {data}')
             # self.get_logger().info(f'Data of grasp_results : {self.grasp_results_data}')
 
-            # 提取抓取结果并转换为 PyTorch 张量
-            num_envs = len(self.grasp_results_data)  # 根据抓取结果确定环境数量
+            # Extract grasp results and convert to PyTorch tensors
+            num_envs = len(self.grasp_results_data)  # Determine number of environments from grasp results
 
-            # 创建 translation 和 rotation 的张量列表
+            # Create lists for translation and rotation tensors
             translations = []
             rotations = []
 
@@ -147,6 +193,7 @@ class IsaacLab(Node):
                 translation = env_result.get('translation')
                 rotation = env_result.get('rotation')
 
+                # Set default values if translation or rotation is None
                 translation = translation if translation is not None else [0.0, 0.0, 0.0]
                 rotation = rotation if rotation is not None else [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0]]
                 translations.append(torch.tensor(translation, dtype=torch.float32))
@@ -155,19 +202,20 @@ class IsaacLab(Node):
             # self.get_logger().info(f"translation: {translations}")
             # self.get_logger().info(f"rotation: {rotations}")
 
-            # 将 translation 和 rotation 转换为张量矩阵
+            # Convert translation and rotation lists to tensor matrices
             if translations != [] and rotations != []: 
-                translation_env_nums = torch.stack(translations)  # (num_envs, 3)
-                rotation_env_nums = torch.stack(rotations)  # (num_envs, 3, 3)
+                translation_env_nums = torch.stack(translations)  # Shape: (num_envs, 3)
+                rotation_env_nums = torch.stack(rotations)  # Shape: (num_envs, 3, 3)
 
-                # 打印结果（调试用）
+                # Debug printing
                 # self.get_logger().info(f"translation_env_nums: {translation_env_nums}")
                 # self.get_logger().info(f"rotation_env_nums: {rotation_env_nums}")
 
-                # 将结果保存为节点属性，供主程序调用
+                # Store results as node attributes for use in main program
                 self.translation_env_nums = translation_env_nums
                 self.rotation_env_nums = rotation_env_nums
             else:
+                # Reset attributes if no valid data
                 self.grasp_results_data = None
                 self.translation_env_nums = None
                 self.rotation_env_nums = None
@@ -178,117 +226,186 @@ class IsaacLab(Node):
         except Exception as e:
             self.get_logger().error(f'Error in listener_callback: {e}')
         
+# ROS 2 initialization function
+def ros2_node_thread(publisher_node):
+    rclpy.spin(publisher_node)
 
 def adjust_matrices_torch(R2) -> torch.Tensor:
     """
-    调整 R2 张量，使其满足以下条件：
-    1. 每个调整后的矩阵的 x 轴与 R1 的 x 轴平行。
-    2. 每个矩阵的 z 轴投影到 R1 的 z-y 平面的比例保持不变。
+    Adjust the R2 tensor to satisfy the following conditions:
+    1. The x-axis of each adjusted matrix is parallel to the x-axis of R1.
+    2. The projection ratio of each matrix's z-axis onto R1's z-y plane remains constant.
     
-    参数:
-        R2 (torch.Tensor): 一个形状为 (n, 3, 3) 的张量，其中包含 n 个旋转矩阵。
+    Args:
+        R2 (torch.Tensor): A tensor of shape (n, 3, 3) containing n rotation matrices.
     
-    返回:
-        torch.Tensor: 调整后的形状为 (n, 3, 3) 的旋转矩阵张量。
+    Returns:
+        torch.Tensor: Adjusted rotation matrix tensor of shape (n, 3, 3).
     """
-    # 定义 R1 的基准旋转矩阵
+    # Define the reference rotation matrix R1
     R1 = torch.tensor([[0.0, 0.0, 1.0],
                        [0.0, -1.0, 0.0],
                        [1.0, 0.0, 0.0]], dtype=R2.dtype, device=R2.device)
     
-    # 提取 R1 的轴向量
+    # Extract axis vectors from R1
     x_axis_R1 = R1[:, 0]
     y_axis_R1 = R1[:, 1]
     z_axis_R1 = R1[:, 2]
     
-    # 确保 R2 的形状为 (n, 3, 3)
-    assert R2.ndim == 3 and R2.shape[1:] == (3, 3), "R2 的形状必须为 (n, 3, 3)"
+    # Ensure R2 has shape (n, 3, 3)
+    assert R2.ndim == 3 and R2.shape[1:] == (3, 3), "R2 must have shape (n, 3, 3)"
     
-    # 调整 R2 的 x 轴为与 R1 的 x 轴平行
+    # Adjust R2's x-axis to be parallel with R1's x-axis
     x_axis_R2_new = x_axis_R1.repeat(R2.shape[0], 1)  # (n, 3)
     
-    # 获取 R2 的原始 z 轴向量
+    # Get the original z-axis vector from R2
     z_axis_R2 = R2[:, :, 2]  # (n, 3)
     
-    # 投影 R2 的 z 轴到 R1 的 z-y 平面
+    # Project R2's z-axis onto R1's z-y plane
     z_proj = torch.einsum('ij,j->i', z_axis_R2, z_axis_R1)[:, None] * z_axis_R1  # (n, 3)
     y_proj = torch.einsum('ij,j->i', z_axis_R2, y_axis_R1)[:, None] * y_axis_R1  # (n, 3)
     
-    # 重新计算调整后的 z 轴，保持比例不变
+    # Recalculate the adjusted z-axis while maintaining the projection ratio
     z_axis_R2_new = z_proj + y_proj
-    z_axis_R2_new = z_axis_R2_new / z_axis_R2_new.norm(dim=1, keepdim=True)  # 归一化 (n, 3)
+    z_axis_R2_new = z_axis_R2_new / z_axis_R2_new.norm(dim=1, keepdim=True)  # normalize (n, 3)
     
-    # 通过右手法则计算新的 y 轴方向
+    # Calculate new y-axis direction using the right-hand rule
     y_axis_R2_new = torch.cross(z_axis_R2_new, x_axis_R2_new, dim=1)  # (n, 3)
-    y_axis_R2_new = y_axis_R2_new / y_axis_R2_new.norm(dim=1, keepdim=True)  # 归一化
+    y_axis_R2_new = y_axis_R2_new / y_axis_R2_new.norm(dim=1, keepdim=True)  # normalize
     
-    # 组合新的旋转矩阵
+    # Combine the new rotation matrix
     R2_new = torch.stack((x_axis_R2_new, y_axis_R2_new, z_axis_R2_new), dim=-1)  # (n, 3, 3)
     
     return R2_new
 
-def change_ee_coordinate_to_isaac_lab(tensor)-> torch.Tensor:
-    # 固定变换矩阵
+def transform_end_effector_coordinate(tensor: torch.Tensor) -> torch.Tensor:
+    """
+    Transform end-effector coordinates from AnyGrasp to Isaac Lab coordinate system.
+    
+    Args:
+        tensor (torch.Tensor): Input transformation matrix (batch_size x 3 x 3)
+        
+    Returns:
+        torch.Tensor: Transformed coordinate matrix (batch_size x 3 x 3)
+    
+    The transformation:
+    1. Extracts the 2x2 submatrix from positions (0:2, 1:3)
+    2. Applies a fixed transformation [[0, -1], [1, 0]]
+    3. Reconstructs the full 3x3 matrix with identity elements
+    """
+    # Fixed transformation matrix for coordinate conversion
     transform_matrix = torch.tensor([[0, -1], [1, 0]], dtype=torch.float32, device=tensor.device)
 
-    # 提取 [[a, b], [c, d]] 的部分
-    sub_matrices = tensor[:, :2, 1:3]  # (n x 2 x 2)
+    # Extract 2x2 submatrix
+    sub_matrices = tensor[:, :2, 1:3]  # Shape: (batch_size x 2 x 2)
 
-    # 批量矩阵乘法
-    transformed_sub_matrices = torch.matmul(transform_matrix, sub_matrices)  # (n x 2 x 2)
+    # Apply transformation
+    transformed_sub_matrices = torch.matmul(transform_matrix, sub_matrices)
 
-    # 构造输出张量
+    # Reconstruct full 3x3 matrix
     output_tensor = torch.zeros_like(tensor)
-    output_tensor[:, :2, :2] = transformed_sub_matrices  # 填充左上角
-    output_tensor[:, 2, 2] = 1.0  # 填充右下角
+    output_tensor[:, :2, :2] = transformed_sub_matrices  # Fill upper-left 2x2
+    output_tensor[:, 2, 2] = 1.0  # Set bottom-right element to 1
 
     return output_tensor
-
-# ROS 2 初始化函數
-def ros2_node_thread(publisher_node):
-    rclpy.spin(publisher_node)
 
 # initialize warp
 wp.init()
 
+# State and Control Classes
 class TakeFoto:
-    ON = wp.constant(1.0)
-    Off = wp.constant(-1.0)
+    """Camera trigger states."""
+    ON = wp.constant(1.0)   # Trigger camera capture
+    OFF = wp.constant(-1.0)  # Camera idle
 
 class GripperState:
-    """States for the gripper."""
-
-    OPEN = wp.constant(1.0)
-    CLOSE = wp.constant(-1.0)
+    """End-effector gripper states."""
+    OPEN = wp.constant(1.0)   # Open gripper for approach
+    CLOSE = wp.constant(-1.0)  # Close gripper for grasping
 
 class RosMsgReceived:
-    TRUE = wp.constant(1.0)
-    FALSE = wp.constant(-1.0)    
+    """ROS message reception states."""
+    TRUE = wp.constant(1.0)   # Message received
+    FALSE = wp.constant(-1.0)  # Waiting for message
 
-class PickSmState:
-    """States for the pick state machine."""
+class RobotStates:
+    """
+    Robot operational states for the manipulation task.
+    Each state represents a specific phase of the pick-and-place operation.
+    """
+    # State definitions
+    REST = wp.constant(0)                  # Initial resting position
+    CAMERA = wp.constant(1)                # Image capture position
+    WAIT_FOR_ROS_MESSAGE = wp.constant(2)  # Waiting for grasp pose
+    DEFAULT_POSE = wp.constant(3)          # Pre-grasp position
+    APPROACH_ABOVE_OBJECT = wp.constant(4)  # Position above target
+    APPROACH_OBJECT = wp.constant(5)        # Moving to grasp position
+    GRASP_OBJECT = wp.constant(6)          # Executing grasp
+    LIFT_OBJECT = wp.constant(7)           # Lifting grasped object
 
-    REST = wp.constant(0)
-    CAMERA = wp.constant(1)
-    WAIT_FOR_ROS_MESSAGE = wp.constant(2)
-    DEFAULT_POSE = wp.constant(3)
-    APPROACH_ABOVE_OBJECT = wp.constant(4)
-    APPROACH_OBJECT = wp.constant(5)
-    GRASP_OBJECT = wp.constant(6)
-    LIFT_OBJECT = wp.constant(7)
-
+    # Detailed state descriptions for logging and debugging
+    STATE_DESCRIPTIONS = {
+        REST: "Robot at rest position",
+        CAMERA: "Capturing RGBD image",
+        WAIT_FOR_ROS_MESSAGE: "Waiting for grasp pose from AnyGrasp",
+        DEFAULT_POSE: "Moving to default position",
+        APPROACH_ABOVE_OBJECT: "Moving above target object",
+        APPROACH_OBJECT: "Moving to grasp position",
+        GRASP_OBJECT: "Executing grasp",
+        LIFT_OBJECT: "Lifting grasped object"
+    }
 
 class PickSmWaitTime:
-    """Additional wait times (in s) for states for before switching."""
+    """
+    Wait times (in seconds) for each state transition.
+    These delays ensure stable execution of each motion phase.
+    """
+    REST = wp.constant(0.4)                 # Short rest at initial position
+    CAMERA = wp.constant(1.6)               # Time for image capture
+    DEFAULT_POSE = wp.constant(1.2)         # Time to reach default pose
+    APPROACH_ABOVE_OBJECT = wp.constant(1.2) # Time to position above object
+    APPROACH_OBJECT = wp.constant(1.2)       # Time to approach object
+    GRASP_OBJECT = wp.constant(0.8)         # Time for grasp execution
+    LIFT_OBJECT = wp.constant(1.2)          # Time for lifting motion
 
-    REST = wp.constant(0.4)
-    CAMERA = wp.constant(1.6)
-    DEFAULT_POSE = wp.constant(1.2)
-    APPROACH_ABOVE_OBJECT = wp.constant(1.2)
-    APPROACH_OBJECT = wp.constant(1.2)
-    GRASP_OBJECT = wp.constant(0.8)
-    LIFT_OBJECT = wp.constant(1.2)
-
+class SimulationConfig:
+    """
+    Centralized configuration management for the simulation environment.
+    Handles all parameter settings and limits for the robot operation.
+    """
+    def __init__(self, args):
+        # Environment settings
+        self.num_envs = args.num_envs
+        self.use_fabric = not args.disable_fabric
+        
+        # Camera configuration
+        self.camera_params = {
+            'width': 1280,          # Image width in pixels
+            'height': 720,          # Image height in pixels
+            'focal_length': 24,     # Focal length in mm
+            'horiz_aperture': 20.955  # Horizontal aperture in mm
+        }
+        
+        # Robot workspace limits (in meters)
+        self.workspace_limits = {
+            'x': (-0.5, 0.5),  # Forward/backward limits
+            'y': (-0.5, 0.5),  # Left/right limits
+            'z': (0.5, 0.8)    # Up/down limits
+        }
+        
+        # Robot motion parameters
+        self.motion_params = {
+            'max_velocity': 0.5,     # Maximum end-effector velocity (m/s)
+            'max_acceleration': 1.0,  # Maximum acceleration (m/s²)
+            'gripper_force': 10.0    # Gripper closing force (N)
+        }
+        
+        # Logging configuration
+        self.logging = {
+            'level': logging.INFO,
+            'format': '%(asctime)s - %(levelname)s - %(message)s',
+            'file': 'simulation.log'
+        }
 
 @wp.kernel
 def infer_state_machine(
@@ -312,81 +429,81 @@ def infer_state_machine(
     # retrieve state machine state
     state = sm_state[tid]
     # decide next state
-    if state == PickSmState.REST:
+    if state == RobotStates.REST:
         des_ee_pose[tid] = ee_pose[tid]
         gripper_state[tid] = GripperState.OPEN
-        take_foto[tid] = TakeFoto.Off
+        take_foto[tid] = TakeFoto.OFF
         # wait for a while
         if sm_wait_time[tid] >= PickSmWaitTime.REST:
             # move to next state and reset wait time
-            sm_state[tid] = PickSmState.CAMERA
+            sm_state[tid] = RobotStates.CAMERA
             sm_wait_time[tid] = 0.0
-    elif state == PickSmState.CAMERA:
+    elif state == RobotStates.CAMERA:
         des_ee_pose[tid] = camera_pose[tid]
         gripper_state[tid] = GripperState.OPEN
-        take_foto[tid] = TakeFoto.Off
+        take_foto[tid] = TakeFoto.OFF
         # wait for a while
         if sm_wait_time[tid] >= PickSmWaitTime.CAMERA:
             take_foto[tid] = TakeFoto.ON
             # move to next state and reset wait time
-            sm_state[tid] = PickSmState.WAIT_FOR_ROS_MESSAGE
+            sm_state[tid] = RobotStates.WAIT_FOR_ROS_MESSAGE
             sm_wait_time[tid] = 0.0
-    elif state == PickSmState.WAIT_FOR_ROS_MESSAGE:
+    elif state == RobotStates.WAIT_FOR_ROS_MESSAGE:
         des_ee_pose[tid] = camera_pose[tid]
         gripper_state[tid] = GripperState.OPEN
-        take_foto[tid] = TakeFoto.Off
+        take_foto[tid] = TakeFoto.OFF
         # wait till ros msg is received
         if ros_msg_received[tid] == RosMsgReceived.TRUE:
-            sm_state[tid] = PickSmState.DEFAULT_POSE
+            sm_state[tid] = RobotStates.DEFAULT_POSE
             sm_wait_time[tid] = 0.0
-    elif state == PickSmState.DEFAULT_POSE:
+    elif state == RobotStates.DEFAULT_POSE:
         des_ee_pose[tid] = default_pose[tid]
         gripper_state[tid] = GripperState.OPEN
-        take_foto[tid] = TakeFoto.Off
+        take_foto[tid] = TakeFoto.OFF
         # TODO: error between current and desired ee pose below threshold
         # wait for a while
         if sm_wait_time[tid] >= PickSmWaitTime.DEFAULT_POSE:
             # move to next state and reset wait time
-            sm_state[tid] = PickSmState.APPROACH_ABOVE_OBJECT
+            sm_state[tid] = RobotStates.APPROACH_ABOVE_OBJECT
             sm_wait_time[tid] = 0.0
-    elif state == PickSmState.APPROACH_ABOVE_OBJECT:
+    elif state == RobotStates.APPROACH_ABOVE_OBJECT:
         des_ee_pose[tid] = grasp_ready_pose[tid]
         gripper_state[tid] = GripperState.OPEN
-        take_foto[tid] = TakeFoto.Off
+        take_foto[tid] = TakeFoto.OFF
         # TODO: error between current and desired ee pose below threshold
         # wait for a while
         if sm_wait_time[tid] >= PickSmWaitTime.APPROACH_OBJECT:
             # move to next state and reset wait time
-            sm_state[tid] = PickSmState.APPROACH_OBJECT
+            sm_state[tid] = RobotStates.APPROACH_OBJECT
             sm_wait_time[tid] = 0.0
-    elif state == PickSmState.APPROACH_OBJECT:
+    elif state == RobotStates.APPROACH_OBJECT:
         des_ee_pose[tid] = object_pose[tid]
         gripper_state[tid] = GripperState.OPEN
-        take_foto[tid] = TakeFoto.Off
+        take_foto[tid] = TakeFoto.OFF
         # TODO: error between current and desired ee pose below threshold
         # wait for a while
         if sm_wait_time[tid] >= PickSmWaitTime.APPROACH_OBJECT:
             # move to next state and reset wait time
-            sm_state[tid] = PickSmState.GRASP_OBJECT
+            sm_state[tid] = RobotStates.GRASP_OBJECT
             sm_wait_time[tid] = 0.0
-    elif state == PickSmState.GRASP_OBJECT:
+    elif state == RobotStates.GRASP_OBJECT:
         des_ee_pose[tid] = object_pose[tid]
         gripper_state[tid] = GripperState.CLOSE
-        take_foto[tid] = TakeFoto.Off
+        take_foto[tid] = TakeFoto.OFF
         # wait for a while
         if sm_wait_time[tid] >= PickSmWaitTime.GRASP_OBJECT:
             # move to next state and reset wait time
-            sm_state[tid] = PickSmState.LIFT_OBJECT
+            sm_state[tid] = RobotStates.LIFT_OBJECT
             sm_wait_time[tid] = 0.0
-    elif state == PickSmState.LIFT_OBJECT:
+    elif state == RobotStates.LIFT_OBJECT:
         des_ee_pose[tid] = des_object_pose[tid]
         gripper_state[tid] = GripperState.CLOSE
-        take_foto[tid] = TakeFoto.Off
+        take_foto[tid] = TakeFoto.OFF
         # TODO: error between current and desired ee pose below threshold
         # wait for a while
         if sm_wait_time[tid] >= PickSmWaitTime.LIFT_OBJECT:
             # move to next state and reset wait time
-            sm_state[tid] = PickSmState.LIFT_OBJECT
+            sm_state[tid] = RobotStates.LIFT_OBJECT
             sm_wait_time[tid] = 0.0
     # increment wait time
     sm_wait_time[tid] = sm_wait_time[tid] + dt[tid]
@@ -527,109 +644,102 @@ class PickAndLiftSm:
     @typechecked
     def get_grasping_pos(self, translations, rotations) -> Tuple[TensorType["num_envs", 7], TensorType["num_envs", 7]]:
         """
-        Compute the grasping position for simulation environment
-
+        Compute the grasping position and approach position for the robot end-effector.
+        
+        This function performs a series of coordinate transformations to convert
+        grasp poses from camera frame to robot root frame.
+        
         Args:
-            
-
+            translations: Grasp positions from AnyGrasp in camera frame
+            rotations: Grasp orientations from AnyGrasp in camera frame
+        
         Returns:
-            torch.Tensor: A tensor of shape (num_envs, 7), where 7 is [3 translation + 4 quaternion].
+            Tuple containing:
+            - grasp_goal: Target grasp pose in robot root frame (num_envs, 7)
+            - grasp_source: Approach pose in robot root frame (num_envs, 7)
+            where 7 = [x, y, z, qw, qx, qy, qz]
         """
-        # Define grasping pose for the arm
-        # Camera pose in world frame
+        # 1. Setup initial poses
+        # Get camera pose in world frame
         camera_translation_world = self.camera_translation_world
         camera_rotation_world = self.camera_rotation_world
 
-        # Grasping pose in camera frame
+        # 2. Process end-effector position in camera frame
         grasp_translation_camera = translations
-        # hand_traslation_from_EE = torch.tensor([0.0, 0.0, 0.1034], device=self.device)
-        hand_traslation_from_EE = torch.tensor([0.0, 0.0, 0.05], device=self.device).repeat(self.num_envs,1)
-        EE_translation_camera = grasp_translation_camera - hand_traslation_from_EE
-        grasp_rotation_camera = rotations
+        # Offset from end-effector to hand center
+        hand_offset = torch.tensor([0.0, 0.0, 0.1034], device=self.device).repeat(self.num_envs, 1)
+        # Apply offset to get end-effector position
+        ee_translation_camera = grasp_translation_camera - hand_offset
+
+        # 3. Process end-effector orientation
+        # Adjust rotation matrices to satisfy constraints
         grasp_rotation_camera = adjust_matrices_torch(rotations)
-        #grasp_rotation_camera = torch.tensor([
-        #    [ 0.0,  -1.0, 0.0],
-        #    [ 0.0,  0.0, -1.0],
-        #    [ 1.0,  0.0, 0.0]
-        #], device=self.device).repeat(self.num_envs, 1, 1)
-        #print(f"print grasp rotation from camera in AnyGrasp:{grasp_rotation_camera}")
-        # grasp_rotation_isaaclab = torch.matmul(torch.matmul(self.ee_T_anygrasp_isaaclab,grasp_rotation_camera), self.ee_T_anygrasp_isaaclab.transpose(-2, -1))
-        grasp_rotation_isaaclab = change_ee_coordinate_to_isaac_lab(grasp_rotation_camera)
-        #grasp_rotation_isaaclab = torch.tensor([
-        #    [ 1.0, 0.0, 0.0],
-        #    [ 0.0, 1.0, 0.0],
-        #    [ 0.0, 0.0, 1.0]
-        #], device =self.device).repeat(self.num_envs, 1, 1)
-        #print(f"print grasp rotation in isaac lab:{grasp_rotation_isaaclab}")
-
-        AnyGrasp_grasp_coordinate_rotation_isaaclab = self.model_coordinate_rotation_to_issaclab
-        grasp_rotation_camera_isaaclab = torch.matmul(AnyGrasp_grasp_coordinate_rotation_isaaclab, grasp_rotation_camera)
-        #print(f"print grasp rotation from camera in isaac lab camera coordinate:{grasp_rotation_camera_isaaclab}")
-
-
-        # Transform grasping position to world frame
-        grasp_translation_world = (
-            camera_translation_world +
-            torch.matmul(camera_rotation_world, EE_translation_camera.unsqueeze(-1)).squeeze(-1)
+        # Transform to Isaac Lab coordinate system
+        grasp_rotation_isaaclab = transform_end_effector_coordinate(grasp_rotation_camera)
+        # Apply coordinate system transformation
+        grasp_rotation_camera_isaaclab = torch.matmul(
+            self.model_coordinate_rotation_to_issaclab, 
+            grasp_rotation_camera
         )
 
-        # Transform grasping orientation to world frame
+        # 4. Transform to world frame
+        # Convert position to world frame
+        grasp_translation_world = (
+            camera_translation_world +
+            torch.matmul(camera_rotation_world, ee_translation_camera.unsqueeze(-1)).squeeze(-1)
+        )
+        # Convert orientation to world frame
         grasp_rotation_world = torch.matmul(camera_rotation_world, grasp_rotation_isaaclab)
-        #print(f"print grasp rotation from camera in isaac lab world coordinate:{grasp_rotation_world}")
 
-
-        # Output results
-        # print("Grasping position in world coordinates (translation):")
-        # print(grasp_translation_world)
-
-        # print("Grasping orientation in world coordinates (rotation matrix):")
-        # print(grasp_rotation_world.cpu().numpy())
-
-        # Robot root pose in the world frame
+        # 5. Transform to robot root frame
+        # Get robot root pose
         robot_root_translation_world = self.robot_root_translation_world
-        robot_root_orientation_world = self.robot_root_orientation_world  # Quaternion (w, x, y, z)
-        robot_root_rotation_world = matrix_from_quat(robot_root_orientation_world)
+        robot_root_rotation_world = matrix_from_quat(self.robot_root_orientation_world)
+        
+        # Compute inverse transformation
+        robot_root_rotation_inverse = robot_root_rotation_world.transpose(-2, -1)
+        robot_root_translation_inverse = -torch.matmul(
+            robot_root_rotation_inverse, 
+            robot_root_translation_world.unsqueeze(-1)
+        ).squeeze(-1)
 
-        # Compute inverse transformation (world → robot root)
-        robot_root_rotation_inverse = robot_root_rotation_world.transpose(-2, -1)  # Transpose of rotation matrix
-        robot_root_translation_inverse = -torch.matmul(robot_root_rotation_inverse, robot_root_translation_world.unsqueeze(-1)).squeeze(-1)
-
-        # Transform grasping pose to robot root frame
+        # Apply transformation to position
         grasp_translation_robot_root = (
             torch.matmul(robot_root_rotation_inverse, grasp_translation_world.unsqueeze(-1)).squeeze(-1) +
             robot_root_translation_inverse
         )
         
-        
+        # Apply transformation to orientation
         grasp_rotation_robot_root = torch.matmul(robot_root_rotation_inverse, grasp_rotation_world)
-        #print(f"print grasp rotation from robot root:{grasp_rotation_robot_root}" ) 
-        # grasp_rotation_robot_root = torch.matmul(grasp_rotation_robot_root,self.ee_rotation_to_table)
         grasp_orientation_robot_root = quat_from_matrix(grasp_rotation_robot_root)
-        #print(f"grasp orientation quat:{grasp_orientation_robot_root}")
-        # grasp_orientation_robot_root = torch.tensor([0.0, 1.0, 0.0, 0.0], device=self.device).repeat(self.num_envs,1)
-        # grasp_rotation_robot_root = matrix_from_quat(grasp_orientation_robot_root)
 
+        # 6. Calculate approach position
+        # Compute approach direction (5cm back from grasp point)
+        approach_direction = torch.matmul(
+            grasp_rotation_robot_root, 
+            torch.tensor([0.0, 0.0, 1.0], device=self.device).unsqueeze(-1)
+        ).squeeze(-1)
+        approach_position = grasp_translation_robot_root - 0.05 * approach_direction
 
-        # 从 grasp_orientation_robot_root 计算方向向量
-        direction_vector = torch.matmul(grasp_rotation_robot_root, torch.tensor([0.0, 0.0, 1.0], device=self.device).unsqueeze(-1)).squeeze(-1)
+        # 7. Combine positions and orientations
+        grasp_goal = torch.cat((grasp_translation_robot_root, grasp_orientation_robot_root), dim=1)
+        grasp_source = torch.cat((approach_position, grasp_orientation_robot_root), dim=1)
 
-        # 计算起点（source_point），即距离 grasp_translation_robot_root 为 0.05 且方向相反的点
-        source_point = grasp_translation_robot_root - 0.05 * direction_vector
-        # Output results
-        # print("Grasping position in robot root coordinates (translation):")
-        # print(grasp_translation_robot_root)
-
-        # print("Grasping orientation in robot root coordinates (rotation matrix):")
-        # print(grasp_rotation_robot_root.cpu().numpy())
-
-        # print("Grasping orientation in robot root coordinates (quaternion):")
-        # print(grasp_orientation_robot_root)
-
-        # Define grasp translation and orientation as a single goal
-        grasp_goal = torch.cat((grasp_translation_robot_root, grasp_orientation_robot_root), dim=1) # Concatenate translation and quaternion
-        grasp_source = torch.cat((source_point, grasp_orientation_robot_root), dim=1) # Concatenate translation and quaternion
         return grasp_goal, grasp_source
 
+
+def save_evaluation_results(output_dir, all_anygrasp_results, grasped_object_results, reach_desired_pose_results):
+    """Save all evaluation metrics to JSON files."""
+    results = {
+        "anygrasp_success": all_anygrasp_results,
+        "grasp_stability": grasped_object_results,
+        "pose_accuracy": reach_desired_pose_results
+    }
+    
+    for metric_name, data in results.items():
+        output_file = os.path.join(output_dir, f"{metric_name}.json")
+        with open(output_file, "w") as f:
+            json.dump(data, f, indent=4)
 
 def main():
     rclpy.init()
@@ -652,14 +762,19 @@ def main():
     # create action buffers (position + quaternion)
     actions = torch.zeros(env.unwrapped.action_space.shape, device=env.unwrapped.device)
     actions[:, 3] = 1.0
-    # desired object orientation (we only do position control of object)
+    
+    # target object frame orientation 
     desired_orientation = torch.zeros((env.unwrapped.num_envs, 4), device=env.unwrapped.device)
     desired_orientation[:, 1] = 1.0
+    
     # create state machine
     pick_sm = PickAndLiftSm(env_cfg.sim.dt * env_cfg.decimation, env.unwrapped.num_envs, env.unwrapped.device)
 
-    # create replicator writers for each environment
+    # create output directory for all environment in simulation
     output_dir_base = os.path.join(os.path.dirname(os.path.realpath(__file__)), "output")
+
+    # Initialize the paths dictionary of all environment
+    all_writer_saved_paths = {}
 
     # Create subfolders and writers for each environment
     rep_writers = []
@@ -674,20 +789,24 @@ def main():
             frame_padding=0,
         )
         rep_writers.append(rep_writer)
-        all_writer_saved_paths = {}
 
-        # Defualt Grasp Result
-        translation_env_nums = torch.tensor([0.0, 0.0, 0.0], device=env.unwrapped.device).repeat(env.unwrapped.num_envs,1)
-        rotation_env_nums = torch.tensor([
-            [       0.0,         0.0, 1.0000e+00],
-            [       0.0, -1.0000e+00,        0.0],
-            [1.0000e+00,         0.0,        0.0]
-        ], device=env.unwrapped.device).repeat(env.unwrapped.num_envs, 1, 1)
+
+    # Defualt Grasp Result
+    translation_env_nums = torch.tensor([0.0, 0.0, 0.0], device=env.unwrapped.device).repeat(env.unwrapped.num_envs,1)
+    rotation_env_nums = torch.tensor([
+        [       0.0,         0.0, 1.0000e+00],
+        [       0.0, -1.0000e+00,        0.0],
+        [1.0000e+00,         0.0,        0.0]
+    ], device=env.unwrapped.device).repeat(env.unwrapped.num_envs, 1, 1)
 
     cycle_count = 0
-    all_anygrasp_results={}
-    grasped_object_results = {} 
-    reach_desired_pose_results ={}
+
+    # Initialize dictionaries to store evaluation results
+    all_anygrasp_results = {}      # Track AnyGrasp success/failure of generating grasping pose
+    grasped_object_results = {}    # Track object grasping stability
+    reach_desired_pose_results = {} # Track final pose accuracy
+
+    # Initialize tracking variables for all environment
     previous_distances = torch.zeros((env.unwrapped.num_envs, 3), device=env.unwrapped.device)
     persistent_distance_changes = torch.zeros(env.unwrapped.num_envs, dtype=torch.bool, device=env.unwrapped.device)
     reach_transferring_pose = torch.zeros(env.unwrapped.num_envs, dtype=torch.bool, device=env.unwrapped.device)
@@ -704,40 +823,39 @@ def main():
             ee_frame_sensor = env.unwrapped.scene["ee_frame"]
             tcp_rest_position = ee_frame_sensor.data.target_pos_w[..., 0, :].clone() - env.unwrapped.scene.env_origins
             tcp_rest_orientation = ee_frame_sensor.data.target_quat_w[..., 0, :].clone()
-            #print(f"print ee frame position:{tcp_rest_position}")
+            # print(f"print ee frame position:{tcp_rest_position}")
 
             # print(f"print current ee_frame:{torch.cat([tcp_rest_position, tcp_rest_orientation], dim=-1)}")
             # -- object frame
-            object_data: RigidObjectData = env.unwrapped.scene["object2"].data
+            object_data: RigidObjectData = env.unwrapped.scene["object"].data
             object_position = object_data.root_pos_w - env.unwrapped.scene.env_origins
-            #print(f"print current object position:{object_position}")
-            # -- target object frame
+            # print(f"print current object position:{object_position}")
+            # -- target object frame position
             desired_position = env.unwrapped.command_manager.get_command("object_pose")[..., :3]
-            #print(f"print desired_transferring position:{desired_position}")
+            # print(f"print desired_transferring position:{desired_position}")
             # print(f"print current desired pos:{torch.cat([desired_position, desired_orientation], dim=-1)}")
 
             current_distances = object_position - tcp_rest_position
             print(f"print current distance between ee and object:{current_distances}")
             
-            distances_ee_dtp = desired_position-tcp_rest_orientation
+            distances_ee_dtp = desired_position - tcp_rest_position
             print(f"print current distance betweem ee and desired transferring position:{distances_ee_dtp}")
             
-            # 检查 sm_state 是否为 7 并比较距离变化
-            for env_idx, sm_state in enumerate(pick_sm.sm_state_wp.tolist()):
-                if sm_state == 7:
-                    # 计算当前距离变化
+            # Monitor object stability and pose accuracy
+            for env_idx, sm_state in enumerate(pick_sm.sm_state):
+                if sm_state == RobotStates.LIFT_OBJECT:  # State 7: Lifting phase
+                    # Check for object stability (no sudden movements)
                     distance_change = torch.abs(current_distances[env_idx] - previous_distances[env_idx])
                     if (distance_change > 0.05).any():
-                        persistent_distance_changes[env_idx] = True  # 标记为 True (object falling down)
+                        persistent_distance_changes[env_idx] = True  # Object is unstable/falling
                     
                     abs_distances_ee_dtp = torch.abs(distances_ee_dtp)
                     if (abs_distances_ee_dtp < 0.01).all():
-                        reach_transferring_pose[env_idx] = True          
-            previous_distances = current_distances.clone()
-            #print(f"print ros node translation_env_nums data:{isaaclab_node.translation_env_nums}")
-            #print(f"print ros node rotation_env_nums data:{isaaclab_node.rotation_env_nums}")
-            #print(f"print grasp result data:{isaaclab_node.grasp_results_data}")
+                        reach_transferring_pose[env_idx] = True
             
+            # Update previous distances for next iteration
+            previous_distances = current_distances.clone()
+
             if isaaclab_node.translation_env_nums == None or isaaclab_node.rotation_env_nums == None:
                 ros_msg_received = torch.full((env.unwrapped.num_envs,), 0.0, device=env.unwrapped.device)
             else:
@@ -769,40 +887,18 @@ def main():
                 # Set ros_msg_received to 0.0 for invalid environments
                 ros_msg_received[invalid_mask] = 0.0
 
-
-
-            #print(f"print translation_env_nums data:{translation_env_nums}")
-            #print(f"print rotation_env_nums data:{rotation_env_nums}")
+            print(f"print translation_env_nums data:{translation_env_nums}")
+            print(f"print rotation_env_nums data:{rotation_env_nums}")
             print(f"print ros_msg_received:{ros_msg_received}")
 
-                # 使用 translation 和 rotation 张量
-                # print(f"Translation Matrices:\n{translation_env_nums}")
-                # print(f"Rotation Matrices:\n{rotation_env_nums}")
-
-            # advance state machine
-            # actions = pick_sm.compute(
-            #    torch.cat([tcp_rest_position, tcp_rest_orientation], dim=-1),
-            #    torch.cat([object_position, desired_orientation], dim=-1),
-            #    torch.cat([desired_position, desired_orientation], dim=-1),
-            # )
-            # advance state machine anygrasp
-            # grasp_goal = torch.tensor([0.25, 0.0, 0.8, 0.0, 1.0, 0.0, 0.0], device=self.device).repeat(self.num_envs, 1)
             grasp_goal, grasp_default_source = pick_sm.get_grasping_pos(translation_env_nums,rotation_env_nums)
             actions = pick_sm.compute(
                 torch.cat([tcp_rest_position, tcp_rest_orientation], dim=-1),
                 grasp_goal,
                 grasp_default_source,
                 torch.cat([desired_position, desired_orientation], dim=-1),
-                ros_msg_received=ros_msg_received,
+                ros_msg_received = ros_msg_received,
             )
-            
-            
-
-
-            # print(f"print current actions:{actions}")
-            # print(f"print current camera data:{camera.data.output[0]}") #env 1
-            # print(f"print current camera data:{camera.data.output[1]}") #env 2
-
             
             # Find indices of environments in the CAMERA state
             camera_indices = torch.nonzero(pick_sm.take_foto == TakeFoto.ON, as_tuple=False)
@@ -833,80 +929,53 @@ def main():
                     saved_paths = write_with_path(rep_writer, rep_output,frame_padding=0)
                     # 將該 env_index 的存儲路徑保存到字典中
                     all_writer_saved_paths[env_index.item()] = saved_paths
-
-            # 集中打印所有檔案存取路徑
-            # print("\nAll saved file paths:")
-            # for env_index, paths in all_saved_paths.items():
-            #     print(f"Environment {env_index}:")
-            #     for annotator, path in paths.items():
-            #         if path:
-            #             print(f"  {annotator}: {path}")
-            # print(f"Print All File Paths:", all_saved_paths)
             
             print(f"print current sm state:{pick_sm.sm_state_wp}")
             isaaclab_node.update_data(pick_sm.sm_state_wp, pick_sm.take_foto_wp, all_writer_saved_paths)
             
-            
-            # else:
-                # print("No environments are in the CAMERA state.")
-
-            # print(f"print current camera state:{pick_sm.take_foto_wp}")
-
+            # Record results when episode ends
             if dones.any():
-                # 初始化当前周期的结果字典
-                anygrasp_result = {}
-                grasped_object_result = {}
-                reach_desired_pose_result = {}
+                # Initialize results for current cycle
+                cycle_results = {
+                    'anygrasp': {},
+                    'grasp_stability': {},
+                    'pose_accuracy': {}
+                }
 
-                # 遍历当前状态机状态，生成 [cycle数目]_[env_nums] 格式的 key
+                # Record results for each environment
                 for env_idx, state in enumerate(pick_sm.sm_state_wp.tolist()):
                     key = f"{cycle_count}_{env_idx}"
-                    # 更新 anygrasp_result
-                    if state == 7:
-                        anygrasp_result[key] = 1
-                    elif state == 2:
-                        anygrasp_result[key] = 0
+                    
+                    # AnyGrasp success evaluation
+                    if state == RobotStates.LIFT_OBJECT:
+                        cycle_results['anygrasp'][key] = 1  # Success
+                    elif state == RobotStates.WAIT_FOR_ROS_MESSAGE:
+                        cycle_results['anygrasp'][key] = 0  # Failed to get grasp pose
                     else:
-                        anygrasp_result[key] = -1
+                        cycle_results['anygrasp'][key] = -1  # Other states
 
-                    # 更新 distance_change_result
-                    grasped_object_result[key] = not persistent_distance_changes[env_idx].item()
+                    # Object stability evaluation
+                    cycle_results['grasp_stability'][key] = not persistent_distance_changes[env_idx].item()
 
-                    reach_desired_pose_result[key] = reach_transferring_pose[env_idx].item()
+                    # Final pose accuracy evaluation
+                    cycle_results['pose_accuracy'][key] = reach_transferring_pose[env_idx].item()
 
-                # 将当前周期结果保存到全局存储
-                all_anygrasp_results.update(anygrasp_result)
-                grasped_object_results.update(grasped_object_result)
-                reach_desired_pose_results.update(reach_desired_pose_result)
+                # Update global results
+                all_anygrasp_results.update(cycle_results['anygrasp'])
+                grasped_object_results.update(cycle_results['grasp_stability'])
+                reach_desired_pose_results.update(cycle_results['pose_accuracy'])
 
-                # 增加 cycle_count
+                # Increment cycle counter
                 cycle_count += 1
 
-                # reset state machine
+                # Reset tracking variables for next episode
                 persistent_distance_changes = torch.zeros(env.unwrapped.num_envs, dtype=torch.bool, device=env.unwrapped.device)
-                reach_transferring_pose = torch.zeros(env.unwrapped.num_envs, dtype=torch.bool, device=env.unwrapped.device) 
+                reach_transferring_pose = torch.zeros(env.unwrapped.num_envs, dtype=torch.bool, device=env.unwrapped.device)
                 pick_sm.reset_idx(dones.nonzero(as_tuple=False).squeeze(-1))
                 all_writer_saved_paths = {}
-                # Defualt Grasp Result
-                translation_env_nums = torch.tensor([0.0, 0.0, 0.0], device=env.unwrapped.device).repeat(env.unwrapped.num_envs,1)
-                rotation_env_nums = torch.tensor([
-                    [       0.0,         0.0, 1.0000e+00],
-                    [       0.0, -1.0000e+00,        0.0],
-                    [1.0000e+00,         0.0,        0.0]
-                ], device=env.unwrapped.device).repeat(env.unwrapped.num_envs, 1, 1)
 
-
-    # close the environment
-    os.makedirs(output_dir_base, exist_ok=True)
-    output_file = os.path.join(output_dir_base, "all_anygrasp_results.json")
-    with open(output_file, "w") as f:
-        json.dump(all_anygrasp_results, f, indent=4)
-    output_file = os.path.join(output_dir_base,"all_grasped_object_results.json")
-    with open(output_file, "w") as f:
-        json.dump(grasped_object_results, f, indent=4)
-    output_file = os.path.join(output_dir_base,"reach_desired_pose_results.json")
-    with open(output_file, "w") as f:
-        json.dump(reach_desired_pose_results, f, indent=4)
+    # Call the save function at the end of main
+    save_evaluation_results(output_dir_base, all_anygrasp_results, grasped_object_results, reach_desired_pose_results)
 
     env.close()
     isaaclab_node.destroy_node()

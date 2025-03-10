@@ -1,1 +1,1 @@
-python subscriber.py --checkpoint_path log/checkpoint_detection.tar --top_down_grasp 
+python grasp_pose_publisher.py --checkpoint_path log/checkpoint_detection.tar --top_down_grasp 

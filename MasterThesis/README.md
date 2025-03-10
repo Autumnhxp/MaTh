@@ -25,17 +25,20 @@ The libraries employed include:
 
 ---
 
-## Setup Instructions
+## Prerequisites
 
-### Prerequisites
-
-1. NVIDIA **Omniverse** installed.
-2. Python environment with the following dependencies:
+1. NVIDIA **Omniverse** installed
+2. ROS 2 environment set up
+3. Two separate Python environments:
+   - Isaac Lab environment
+   - Minkowski Engine environment
+4. Required packages:
    - `isaaclab`
    - `anygrasp`
-   - Any additional Python libraries required by the Omniverse platform.
+   - `ros2`
+   - `minkowski-engine`
 
-### Installation
+## Installation
 
 1. Clone this repository:
    ```bash
@@ -64,11 +67,54 @@ The libraries employed include:
    ```
    
 
-### Running the Project
-1. Execute the lift_cube_sm script to start the object detection and retrieval system in isaaclab virtual environment:
-  ```bash
-  (isaaclab) python /MasterThesis/lift_cube_sm.py
-  ```
+## Running the Project
+
+### 1. Set up ROS 2 Environment
+```bash
+# Navigate to your ROS 2 workspace
+cd ros2_ws
+
+# Build the workspace
+colcon build
+
+# Source the workspace
+source install/setup.bash
+
+# Verify the bridge node exists
+ros2 pkg list | grep bridge_pkg  # Check if bridge_pkg is installed
+
+# Start the bridge node in terminal
+ros2 run bridge_pkg bridge_node  # Keep this terminal running
+```
+
+> **Note**: The bridge node must be running throughout the entire simulation. Keep this terminal open and start a new terminal for the next steps.
+
+### 2. Launch AnyGrasp Service
+```bash
+# Activate Minkowski Engine environment
+conda activate minkowski_env  # or your environment name
+
+# Navigate to AnyGrasp directory
+cd MasterThesis/AnyGrasp
+
+# Run the grasp pose calculation service
+sh Calculation_GraspPose.sh
+```
+
+### 3. Start Isaac Sim Simulation
+```bash
+# Activate Isaac Lab environment
+source isaaclab/bin/activate
+
+# Run the simulation
+python MasterThesis/lift_cube_sm_ros.py
+```
+
+### Important Notes
+- Ensure all three components (ROS 2, AnyGrasp, and Isaac Sim) are running simultaneously
+- Run each component in a separate terminal
+- Keep the order of execution as specified above
+- Verify that ROS 2 communication is working properly before starting the simulation
 
 ---
 
