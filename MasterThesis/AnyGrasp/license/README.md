@@ -4,6 +4,7 @@ Please refer to the official **[AnyGrasp](https://github.com/graspnet/anygrasp_s
 
 #### **Folder Structure After License Setup**
 Once the license setup is completed, this folder will contain the following files:
+```
 AnyGrasp/
 │── example_data/
 │── license/
@@ -13,13 +14,13 @@ AnyGrasp/
 │   │── [YourName].public_key # Public key file
 │   │── [YourName].signature # Signature file 
 │── log/
-│   │── checkpoint_detection.tar
+│   │── checkpoint_detection.tar  # Model checkpoints
 │── Calculation_GraspPose.py
 │── Calculation_GraspPose.sh
 │── grasp_pose_publisher.py
 │── gsnet.so # Shared library for grasp network computations
 │── lib_cxx.so  # C++ shared library for low-level computations
-
+```
 
 These files are essential for AnyGrasp's license authentication.  
 Ensure that all required files are present before running the software.
