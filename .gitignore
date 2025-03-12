@@ -81,4 +81,5 @@ CMakeCache.txt
 
 # AnyGrasp
 MasterThesis/AnyGrasp/license/*
+!MasterThesis/AnyGrasp/license/README.md
 MasterThesis/AnyGrasp/.TimeRecord
