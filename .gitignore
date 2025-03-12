@@ -78,3 +78,7 @@ CMakeFiles/
 cmake_install.cmake
 Makefile
 CMakeCache.txt
+
+# AnyGrasp
+MasterThesis/AnyGrasp/license/*
+MasterThesis/AnyGrasp/.TimeRecord

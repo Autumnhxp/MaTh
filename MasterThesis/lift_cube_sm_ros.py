@@ -666,7 +666,7 @@ class PickAndLiftSm:
 
         # 2. Process end-effector position in camera frame
         grasp_translation_camera = translations
-        # Offset from end-effector to hand center
+        # Offset from end-effector to center point of fingertips when closed
         hand_offset = torch.tensor([0.0, 0.0, 0.1034], device=self.device).repeat(self.num_envs, 1)
         # Apply offset to get end-effector position
         ee_translation_camera = grasp_translation_camera - hand_offset
@@ -943,7 +943,7 @@ def main():
                 }
 
                 # Record results for each environment
-                for env_idx, state in enumerate(pick_sm.sm_state_wp.tolist()):
+                for env_idx, state in enumerate(pick_sm.sm_state_wp.numpy().tolist()):
                     key = f"{cycle_count}_{env_idx}"
                     
                     # AnyGrasp success evaluation
